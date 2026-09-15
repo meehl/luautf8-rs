@@ -3,8 +3,8 @@
 //! This crate provides the same API as the [`luautf8`](https://github.com/starwing/luautf8) Lua
 //! module.
 //!
-//! Enable the `module` feature to create a compiled Lua module that can be loaded from Lua code
-//! using `require` and acts as a drop-in replacement for `luautf8`.
+//! Enable the `module` feature to create a compiled Lua module that acts as a drop-in replacement
+//! for `luautf8` and can be loaded from Lua code using `require`.
 //!
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
