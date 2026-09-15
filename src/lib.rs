@@ -9,7 +9,7 @@
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
 
-use mlua::{IntoLua, Lua, MultiValue, Result as LuaResult, Table, Value};
+use mlua::{IntoLua, Lua, LuaString, MultiValue, Result as LuaResult, Table, Value};
 
 // TODO: pattern depends on lua version
 const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
@@ -134,8 +134,15 @@ fn l_match(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_reverse(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the reverse of `s`. Reverses by character, not by byte. When `lax` is true, invalid
+/// sequences are reversed leniently without raising an error.
+fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaString> {
+    if lax.unwrap_or(false) {
+        todo!()
+    } else {
+        let reversed = s.to_str()?.chars().rev().collect::<String>();
+        lua.create_string(reversed)
+    }
 }
 
 fn l_sub(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
