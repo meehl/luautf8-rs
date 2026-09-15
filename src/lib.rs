@@ -112,8 +112,22 @@ fn l_len(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_lower(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Converts `s` to lowercase. With an integer argument, converts a code point.
+fn l_lower(lua: &Lua, s: Value) -> LuaResult<Value> {
+    match s {
+        Value::Integer(n) => {
+            let ch = char::from_u32(n as u32)
+                .ok_or_else(|| mlua::Error::runtime("invalid Unicode codepoint"))?;
+            // NOTE: the lowercase mapping can expand to multiple `char`s.
+            // `luautf8` only returns one codepoint so do the same here.
+            (ch.to_lowercase().next().unwrap() as i64).into_lua(lua)
+        }
+        Value::String(lua_string) => lua_string.to_str()?.to_lowercase().into_lua(lua),
+        other => Err(mlua::Error::runtime(format!(
+            "number/string expected, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn l_match(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
