@@ -9,7 +9,7 @@
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
 
-use mlua::{Lua, MultiValue, Result as LuaResult, Table};
+use mlua::{IntoLua, Lua, MultiValue, Result as LuaResult, Table, Value};
 
 // TODO: pattern depends on lua version
 const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
@@ -128,8 +128,22 @@ fn l_sub(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_upper(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Converts `s` to uppercase. With an integer argument, converts a code point.
+fn l_upper(lua: &Lua, s: Value) -> LuaResult<Value> {
+    match s {
+        Value::Integer(n) => {
+            let ch = char::from_u32(n as u32)
+                .ok_or_else(|| mlua::Error::runtime("invalid Unicode codepoint"))?;
+            // NOTE: the uppercase mapping can expand to multiple `char`s.
+            // `luautf8` only returns one codepoint so do the same here.
+            (ch.to_uppercase().next().unwrap() as i64).into_lua(lua)
+        }
+        Value::String(lua_string) => lua_string.to_str()?.to_uppercase().into_lua(lua),
+        other => Err(mlua::Error::runtime(format!(
+            "number/string expected, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn l_escape(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
