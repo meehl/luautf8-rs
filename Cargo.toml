@@ -18,4 +18,4 @@ lua55 = ["mlua/lua55"]
 luajit = ["mlua/luajit"]
 
 [dependencies]
-mlua = { version = "0.12.1", features = [] }
+mlua = { version = "0.12", features = [] }
