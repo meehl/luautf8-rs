@@ -200,6 +200,7 @@ fn l_grapheme_indices(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
+#[cfg(feature = "module")]
 #[mlua::lua_module]
 fn luautf8(lua: &Lua) -> LuaResult<Table> {
     create_module(lua)
