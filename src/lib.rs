@@ -9,6 +9,8 @@
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
 
+use std::{iter::Peekable, str::Chars};
+
 use mlua::{IntoLua, Lua, LuaString, MultiValue, Result as LuaResult, Table, Value};
 
 // TODO: pattern depends on lua version
@@ -167,8 +169,74 @@ fn l_upper(lua: &Lua, s: Value) -> LuaResult<Value> {
     }
 }
 
-fn l_escape(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Escapes `s` to UTF-8 format (supports %ddd, %{ddd}, %uddd, %u{ddd}, %xhhh, %x{hhh}, and %? for
+/// any other character).
+fn l_escape(_lua: &Lua, s: String) -> LuaResult<String> {
+    let mut chars = s.chars().peekable();
+    let mut result = String::with_capacity(s.len());
+
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            result.push(ch);
+            continue;
+        }
+
+        match chars.peek() {
+            Some(d) if d.is_ascii_digit() || d == &'{' => {
+                result.push(parse_escaped_codepoint(&mut chars, 10)?)
+            }
+            Some('u' | 'U') => {
+                chars.next();
+                result.push(parse_escaped_codepoint(&mut chars, 10)?)
+            }
+            Some('x' | 'X') => {
+                chars.next();
+                result.push(parse_escaped_codepoint(&mut chars, 16)?)
+            }
+            Some(other) => {
+                result.push(*other);
+                chars.next();
+            }
+            None => return Err(mlua::Error::runtime("unfinished escape")),
+        }
+    }
+
+    Ok(result)
+}
+
+/// Parses either "d+" or "{d+}" into a `char`. `radix` selects the base of digit "d".
+pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> LuaResult<char> {
+    let braced = chars.next_if_eq(&'{').is_some();
+    let mut value: u32 = 0;
+    let mut digits = 0;
+
+    loop {
+        match chars.peek() {
+            Some(c) if c.is_digit(radix) => {
+                value = value
+                    .checked_mul(radix)
+                    .and_then(|v| v.checked_add(c.to_digit(radix).expect("c is a digit")))
+                    .ok_or(mlua::Error::runtime("invalid codepoint"))?;
+                digits += 1;
+                chars.next();
+            }
+            // braced form: only `}` ends the sequence
+            Some('}') if braced => {
+                chars.next();
+                break;
+            }
+            Some(c) if braced => return Err(mlua::Error::runtime(format!("invalid escape '{c}'"))),
+            None if braced => return Err(mlua::Error::runtime("unfinished escape")),
+            // unbraced form: stop at the first non-digit or end
+            _ => break,
+        }
+    }
+
+    if digits == 0 {
+        return Err(mlua::Error::runtime("invalid escape: expected digit"));
+    }
+
+    char::from_u32(value).ok_or(mlua::Error::runtime("invalid codepoint"))
 }
 
 fn l_charpos(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
