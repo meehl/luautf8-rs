@@ -303,8 +303,9 @@ fn l_ncasecmp(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_isvalid(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns `true` if `s` is a valid UTF-8 string.
+fn l_isvalid(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
+    Ok(s.to_str().is_ok())
 }
 
 fn l_clean(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
