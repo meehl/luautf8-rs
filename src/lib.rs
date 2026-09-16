@@ -157,8 +157,22 @@ fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaStr
     }
 }
 
-fn l_sub(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the substring of `s` starting at `start` and ending at `end`.
+fn l_sub(_lua: &Lua, (s, start, end): (String, i32, Option<i32>)) -> LuaResult<String> {
+    let len = s.chars().count() as i32;
+
+    let normalize = |idx: i32| if idx >= 0 { idx } else { len + idx + 1 };
+    let i = normalize(start).max(1);
+    let j = normalize(end.unwrap_or(-1)).min(len);
+
+    if i > j {
+        Ok(String::new())
+    } else {
+        Ok(s.chars()
+            .skip((i - 1) as usize)
+            .take((j - i + 1) as usize)
+            .collect())
+    }
 }
 
 /// Converts `s` to uppercase. With an integer argument, converts a code point.
