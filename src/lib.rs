@@ -11,7 +11,10 @@
 
 use std::{iter::Peekable, str::Chars};
 
-use mlua::{IntoLua, Lua, LuaString, MultiValue, Result as LuaResult, Table, Value};
+use mlua::{
+    Integer as LuaInteger, IntoLua, Lua, LuaString, MultiValue, Result as LuaResult, Table, Value,
+    Variadic,
+};
 
 // TODO: pattern depends on lua version
 const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
@@ -94,8 +97,15 @@ fn l_byte(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_char(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns a string with each argument converted to a UTF-8 byte sequence.
+fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
+    let mut result = String::with_capacity(args.len());
+    for arg in args {
+        // TODO: use `BadArgument` error
+        let ch = char::from_u32(arg as u32).ok_or(mlua::Error::runtime("value out of range"))?;
+        result.push(ch);
+    }
+    Ok(result)
 }
 
 fn l_find(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
