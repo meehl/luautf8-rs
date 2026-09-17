@@ -194,8 +194,29 @@ fn next_char(
     Ok(None)
 }
 
-fn l_byte(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the internal numeric codes of the characters of `s`.
+fn l_byte(
+    _lua: &Lua,
+    (s, start, end): (LuaString, Option<i32>, Option<i32>),
+) -> LuaResult<Variadic<i32>> {
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+    let len = s.chars().count() as i32;
+
+    let normalize = |idx: i32| if idx >= 0 { idx } else { len + idx + 1 };
+    let i = normalize(start.unwrap_or(1)).max(1);
+    let j = normalize(end.unwrap_or(start.unwrap_or(1))).min(len);
+
+    if i > j {
+        Ok(Variadic::new())
+    } else {
+        Ok(s.chars()
+            .skip((i - 1) as usize)
+            .take((j - i + 1) as usize)
+            .map(|ch| ch as i32)
+            .collect())
+    }
 }
 
 /// Returns a string with each argument converted to a UTF-8 byte sequence.
