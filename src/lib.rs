@@ -12,8 +12,8 @@
 use std::{iter::Peekable, str::Chars};
 
 use mlua::{
-    Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue, Result as LuaResult,
-    Table, Value, Variadic,
+    Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
+    Result as LuaResult, Table, Value, Variadic,
 };
 
 // TODO: pattern depends on lua version
@@ -95,7 +95,7 @@ fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<Multi
     };
 
     if !(1..=len as i32 + 1).contains(&i) {
-        // TODO: use BadArgument
+        // TODO: use mlua::Error:BadArgument?
         return Err(mlua::Error::runtime("bad argument: position out of range"));
     }
 
@@ -139,8 +139,59 @@ fn l_codepoint(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_codes(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns an iterator over of `s` that returns the position (in bytes) and codepoint of each
+/// UTF-8 character. When lax is true, invalid sequences are skipped instead of raising an error.
+fn l_codes(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<Function> {
+    let bytes = s.as_bytes().to_vec();
+    let lax = lax.unwrap_or(false);
+
+    let mut pos = 0;
+    lua.create_function_mut(move |lua, ()| match next_char(&bytes, &mut pos, lax) {
+        Ok(Some((pos, ch))) => (pos + 1, ch as u32).into_lua_multi(lua),
+        Ok(None) => (Value::Nil,).into_lua_multi(lua),
+        Err(_) => Err(mlua::Error::runtime("invalid UTF-8 codepoint")),
+    })
+}
+
+fn next_char(
+    bytes: &[u8],
+    pos: &mut usize,
+    lax: bool,
+) -> Result<Option<(usize, char)>, std::str::Utf8Error> {
+    while *pos < bytes.len() {
+        let start = *pos;
+        let end = (start + 4).min(bytes.len());
+
+        match std::str::from_utf8(&bytes[start..end]) {
+            Ok(s) => {
+                let ch = s.chars().next().unwrap();
+                *pos += ch.len_utf8();
+                return Ok(Some((start, ch)));
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+
+                if valid > 0 {
+                    let ch = std::str::from_utf8(&bytes[start..start + valid])
+                        .unwrap()
+                        .chars()
+                        .next()
+                        .unwrap();
+
+                    *pos += ch.len_utf8();
+                    return Ok(Some((start, ch)));
+                }
+
+                if !lax {
+                    return Err(e);
+                }
+
+                *pos += e.error_len().unwrap_or(1);
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 fn l_byte(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
