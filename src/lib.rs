@@ -413,8 +413,16 @@ fn l_clean(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_invalidoffset(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the byte position position within s of the first invalid UTF-8 byte sequence (1 is the first byte of the string). If s is a valid UTF-8 string, returns nil. The default for i is 1. The optional numeric argument i specifies where to start the search and can be negative.
+fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<i32>)) -> LuaResult<Value> {
+    let len = s.as_bytes().len();
+    let start = i.map_or(1, |i| (if i >= 0 { i } else { len as i32 + i + 1 }).max(1));
+    let start = (start - 1) as usize; // translate to 0-based index
+    match std::str::from_utf8(&s.as_bytes()[start..]) {
+        Ok(_) => Ok(mlua::Nil),
+        // translate to 1-based index and return
+        Err(e) => (start + e.valid_up_to() + 1).into_lua(lua),
+    }
 }
 
 fn l_isnfc(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
