@@ -12,8 +12,8 @@
 use std::{iter::Peekable, str::Chars};
 
 use mlua::{
-    Integer as LuaInteger, IntoLua, Lua, LuaString, MultiValue, Result as LuaResult, Table, Value,
-    Variadic,
+    Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue, Result as LuaResult,
+    Table, Value, Variadic,
 };
 
 // TODO: pattern depends on lua version
@@ -81,8 +81,58 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
     Ok(exports)
 }
 
-fn l_offset(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the position (in bytes) where the encoding of the n-th character of s (counting from position i) starts. A negative n gets characters before position i. The default for i is 1 when n is non-negative and #s + 1 otherwise, so that utf8.offset(s, -n) gets the offset of the n-th character from the end of the string. If the specified character is neither in the subject nor right after its end, the function returns nil.
+///
+/// As a special case, when n is 0 the function returns the start of the encoding of the character that contains the i-th byte of s.
+/// This function assumes that s is a valid UTF-8 string.
+fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<MultiValue> {
+    let len = s.len();
+    let i = match i {
+        Some(i) if i < 0 => len as i32 + i + 1,
+        Some(i) => i,
+        None if n >= 0 => 1,
+        None => len as i32 + 1,
+    };
+
+    if !(1..=len as i32 + 1).contains(&i) {
+        // TODO: use BadArgument
+        return Err(mlua::Error::runtime("bad argument: position out of range"));
+    }
+
+    let pos = (i - 1) as usize; // translate to 0-based index
+
+    let start = match n {
+        0 => Some(s.floor_char_boundary(pos)),
+        _ if !s.is_char_boundary(pos) => {
+            return Err(mlua::Error::runtime(
+                "initial position is a continuation byte",
+            ));
+        }
+        n if n > 0 => s[pos..]
+            .char_indices()
+            .map(|(offset, _)| pos + offset)
+            // char right after the end returns the string length in bytes
+            .chain(std::iter::once(s.len()))
+            .nth((n - 1) as usize),
+        n if n < 0 => s[..pos]
+            .char_indices()
+            .rev()
+            .nth((-n - 1) as usize)
+            .map(|(offset, _)| offset),
+        _ => unreachable!("i32 must be zero, positive, or negative"),
+    };
+
+    let Some(start) = start else {
+        return mlua::Value::Nil.into_lua_multi(lua);
+    };
+
+    let end = s
+        .get(start..)
+        .and_then(|rest| rest.chars().next())
+        .map_or(start, |c| start + c.len_utf8());
+
+    // translate back to 1-based indices and return
+    (start + 1, end + 1).into_lua_multi(lua)
 }
 
 fn l_codepoint(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
