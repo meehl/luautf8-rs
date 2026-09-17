@@ -9,12 +9,17 @@
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
 
+mod matching;
+mod pattern;
+
 use std::{iter::Peekable, str::Chars};
 
 use mlua::{
     Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
     Result as LuaResult, Table, Value, Variadic,
 };
+
+use crate::pattern::Pattern;
 
 // TODO: pattern depends on lua version
 const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
@@ -264,8 +269,25 @@ fn l_lower(lua: &Lua, s: Value) -> LuaResult<Value> {
     }
 }
 
-fn l_match(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Matches pattern in `s`, returning the captures (or the whole match).
+fn l_match(lua: &Lua, (s, pattern, init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
+    // TODO: use same error msgs?
+    // TODO: init (start position)
+    let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+    match p.find(&s) {
+        Some(m) if m.capture_count() > 0 => {
+            let captures = m
+                .captures()
+                .map(|s| s.into_lua(lua))
+                .collect::<LuaResult<Vec<_>>>()?;
+            Ok(MultiValue::from_vec(captures))
+        }
+        Some(m) => {
+            // no captures so just return the entire match
+            (m.as_str().to_string(),).into_lua_multi(lua)
+        }
+        None => (mlua::Value::Nil,).into_lua_multi(lua),
+    }
 }
 
 /// Returns the reverse of `s`. Reverses by character, not by byte. When `lax` is true, invalid
