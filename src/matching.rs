@@ -236,23 +236,17 @@ impl<'p> Matcher<'p> {
                         }
                     }
                 }
-                Item::CaptureRef(n) => match self.match_capture_ref(ctx, pos, *n) {
-                    Some(end) => {
-                        pos = end;
-                        item_index += 1;
-                        continue;
-                    }
-                    None => return None,
-                },
+                Item::CaptureRef(n) => {
+                    let end = self.match_capture_ref(ctx, pos, *n)?;
+                    pos = end;
+                    item_index += 1;
+                    continue;
+                }
                 Item::Balanced { open, close } => {
-                    match self.match_balanced(ctx, pos, *open, *close) {
-                        Some(end) => {
-                            pos = end;
-                            item_index += 1;
-                            continue;
-                        }
-                        None => return None,
-                    }
+                    let end = self.match_balanced(ctx, pos, *open, *close)?;
+                    pos = end;
+                    item_index += 1;
+                    continue;
                 }
                 Item::Frontier(character_set) => {
                     if self.match_frontier(ctx, pos, character_set) {

@@ -5,7 +5,10 @@
 
 use std::fmt;
 
-use crate::matching::{Match, Matcher, Matches};
+use crate::{
+    matching::{Match, Matcher, Matches},
+    replacement::Replacer,
+};
 
 /// A parsed Lua pattern.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -38,6 +41,20 @@ impl Pattern {
     /// Creates an iterator over all matches.
     pub fn find_all<'p, 's>(&'p self, input: &'s str) -> Matches<'p, 's> {
         Matches::new(self, input)
+    }
+
+    /// Replaces all matches using a `Replacement`. `limit` limits the number of replacements to
+    /// perform.
+    pub fn replace<'s, F, E>(
+        &self,
+        input: &'s str,
+        replacement: F,
+        limit: Option<usize>,
+    ) -> Result<(String, usize), E>
+    where
+        F: Fn(&Match) -> Result<Option<String>, E>,
+    {
+        Replacer::new(self).replace_with(input, replacement, limit)
     }
 
     pub fn sequence(&self) -> &[Item] {

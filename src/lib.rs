@@ -11,6 +11,7 @@
 
 mod matching;
 mod pattern;
+mod replacement;
 
 use std::{iter::Peekable, str::Chars};
 
@@ -19,7 +20,7 @@ use mlua::{
     Result as LuaResult, Table, Value, Variadic,
 };
 
-use crate::pattern::Pattern;
+use crate::{matching::Match, pattern::Pattern, replacement::ReplacementString};
 
 // TODO: pattern depends on lua version
 const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
@@ -243,8 +244,86 @@ fn l_gmatch(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_gsub(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+enum LuaReplacement {
+    String(ReplacementString),
+    Table(mlua::Table),
+    Function(mlua::Function),
+}
+
+/// Replaces every occurrence of `pattern` in `s` with `repl`, returning the new string and the
+/// number of substitutions. A maximum of `n` (default: unlimited) replacements will be performed.
+fn l_gsub(
+    lua: &Lua,
+    (s, pattern, repl, n): (String, String, Value, Option<i32>),
+) -> LuaResult<(String, usize)> {
+    let pattern =
+        Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+    let replacement = match repl {
+        Value::String(s) => LuaReplacement::String(
+            ReplacementString::parse(&s.to_str()?, pattern.capture_count() as u8).map_err(|e| {
+                match e {
+                    replacement::ReplacementError::InvalidReference => {
+                        mlua::Error::runtime("invalid capture index")
+                    }
+                    replacement::ReplacementError::InvalidEscape => {
+                        mlua::Error::runtime("invalid use of '%' in replacement string")
+                    }
+                }
+            })?,
+        ),
+        Value::Table(table) => LuaReplacement::Table(table),
+        Value::Function(function) => LuaReplacement::Function(function),
+        _ => return Err(mlua::Error::runtime("string/function/table expected")),
+    };
+    let limit = n.map(|n| {
+        if n <= 0 {
+            0
+        } else {
+            usize::try_from(n).unwrap_or(usize::MAX)
+        }
+    });
+
+    let replace = |m: &Match| match &replacement {
+        LuaReplacement::String(replacement_string) => Ok(Some(replacement_string.apply(m))),
+        LuaReplacement::Table(table) => {
+            // use first capture as key, or whole match if no captures
+            let key = m.capture(0).unwrap_or_else(|| m.as_str());
+            let value = table.get(key)?;
+            match value {
+                Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+                Value::Nil | Value::Boolean(false) => Ok(None),
+                other => Err(mlua::Error::runtime(format!(
+                    "invalid replacement value (a {})",
+                    other.type_name()
+                ))),
+            }
+        }
+        LuaReplacement::Function(function) => {
+            // use all captures as function arguments, or whole match if no captures
+            let args: Variadic<LuaString> = if m.capture_count() == 0 {
+                Variadic::from(vec![lua.create_string(m.as_str())?])
+            } else {
+                Variadic::from(
+                    m.captures()
+                        .map(|capture| lua.create_string(capture))
+                        .collect::<LuaResult<Vec<_>>>()?,
+                )
+            };
+
+            let value = function.call(args)?;
+
+            match value {
+                Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+                Value::Nil | Value::Boolean(false) => Ok(None),
+                other => Err(mlua::Error::runtime(format!(
+                    "invalid replacement value (a {})",
+                    other.type_name()
+                ))),
+            }
+        }
+    };
+
+    pattern.replace(&s, replace, limit)
 }
 
 fn l_len(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
