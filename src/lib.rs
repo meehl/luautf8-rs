@@ -87,10 +87,14 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
     Ok(exports)
 }
 
-/// Returns the position (in bytes) where the encoding of the n-th character of s (counting from position i) starts. A negative n gets characters before position i. The default for i is 1 when n is non-negative and #s + 1 otherwise, so that utf8.offset(s, -n) gets the offset of the n-th character from the end of the string. If the specified character is neither in the subject nor right after its end, the function returns nil.
+/// Returns the position (in bytes) where the encoding of the n-th character of s (counting from
+/// position i) starts. A negative n gets characters before position i. The default for i is 1 when
+/// n is non-negative and #s + 1 otherwise, so that utf8.offset(s, -n) gets the offset of the n-th
+/// character from the end of the string. If the specified character is neither in the subject nor
+/// right after its end, the function returns nil.
 ///
-/// As a special case, when n is 0 the function returns the start of the encoding of the character that contains the i-th byte of s.
-/// This function assumes that s is a valid UTF-8 string.
+/// As a special case, when n is 0 the function returns the start of the encoding of the character
+/// that contains the i-th byte of s.  This function assumes that s is a valid UTF-8 string.
 fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<MultiValue> {
     let len = s.len();
     let i = match i {
@@ -535,7 +539,9 @@ fn l_clean(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-/// Returns the byte position position within s of the first invalid UTF-8 byte sequence (1 is the first byte of the string). If s is a valid UTF-8 string, returns nil. The default for i is 1. The optional numeric argument i specifies where to start the search and can be negative.
+/// Returns the byte position position within s of the first invalid UTF-8 byte sequence (1 is the
+/// first byte of the string). If s is a valid UTF-8 string, returns nil. The default for i is 1.
+/// The optional numeric argument i specifies where to start the search and can be negative.
 fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<i32>)) -> LuaResult<Value> {
     let len = s.as_bytes().len();
     let start = i.map_or(1, |i| (if i >= 0 { i } else { len as i32 + i + 1 }).max(1));
