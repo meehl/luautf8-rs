@@ -87,6 +87,21 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
     Ok(exports)
 }
 
+/// Resolves an index relative to a sequence of length `len`.
+///
+/// Positive indices are returned unchanged. Negative indices count backward from the end, with
+/// `-1` referring to the last position. A negative index that refers before the first position
+/// results in `0`.
+fn normalize_lua_index(pos: i32, len: usize) -> i32 {
+    if pos >= 0 {
+        pos
+    } else if pos.unsigned_abs() as usize > len {
+        0
+    } else {
+        len as i32 + pos + 1
+    }
+}
+
 /// Returns the position (in bytes) where the encoding of the n-th character of s (counting from
 /// position i) starts. A negative n gets characters before position i. The default for i is 1 when
 /// n is non-negative and #s + 1 otherwise, so that utf8.offset(s, -n) gets the offset of the n-th
@@ -145,8 +160,48 @@ fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<Multi
     (start + 1, end + 1).into_lua_multi(lua)
 }
 
-fn l_codepoint(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the code points of the substring starting at position `i` and ending at `j` (both
+/// inclusive, default 1 and i). When `lax` is true, invalid code points such as surrogates are
+/// returned instead of raising an error.
+/// NOTE: orignal luautf8 docs claim `j` defaults to `#s` but it actually defaults to `i`.
+fn l_codepoint(
+    _lua: &Lua,
+    (s, i, j, lax): (LuaString, Option<i32>, Option<i32>, Option<bool>),
+) -> LuaResult<Variadic<u32>> {
+    let bytes = s.as_bytes().to_vec();
+    let len = bytes.len();
+    let i = i.map_or(1, |i| normalize_lua_index(i, len));
+    let j = j.map_or(i, |j| normalize_lua_index(j, len));
+    let lax = lax.unwrap_or(false);
+
+    // TODO: use mlua::Error::BadArgument
+    if !(i >= 1) {
+        return Err(mlua::Error::runtime("bad argument: out of bounds"));
+    }
+    if !(j <= len as i32) {
+        return Err(mlua::Error::runtime("bad argument: out of bounds"));
+    }
+
+    // TODO: deal with ranges that are too long
+
+    if i > j {
+        return Ok(Variadic::new());
+    }
+
+    let start = (i - 1) as usize;
+    let end = j as usize;
+    let mut result = Variadic::new();
+    let mut pos = start;
+    while pos < end {
+        let Some((_, ch)) = next_char(&bytes, &mut pos, lax)
+            .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?
+        else {
+            break;
+        };
+        result.push(ch as u32);
+    }
+
+    Ok(result)
 }
 
 /// Returns an iterator over of `s` that returns the position (in bytes) and codepoint of each
