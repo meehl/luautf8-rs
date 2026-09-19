@@ -27,14 +27,14 @@ impl<'p> Replacer<'p> {
 
         for m in self.pattern.find_all(input).take(limit) {
             // leave original between matches intact
-            output.push_str(&input[last..m.start()]);
+            output.push_str(&input[last..m.start_byte()]);
 
             match replacement(&m)? {
                 Some(replacement) => output.push_str(&replacement),
                 None => output.push_str(m.as_str()),
             }
 
-            last = m.end();
+            last = m.end_byte();
             num_of_replacements += 1;
         }
 

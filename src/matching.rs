@@ -3,12 +3,18 @@ use crate::pattern::{
     SetElement,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Position {
+    byte_index: usize,
+    char_index: usize,
+}
+
 /// A successful match.
 #[derive(Debug)]
 pub struct Match<'s> {
     input: &'s str,
-    start: usize,
-    end: usize,
+    start: Position,
+    end: Position,
     captures: Vec<CaptureSpan>,
 }
 
@@ -22,15 +28,27 @@ struct CaptureSpan {
 impl<'s> Match<'s> {
     /// Returns the matched substring.
     pub fn as_str(&self) -> &'s str {
-        &self.input[self.start..self.end]
+        &self.input[self.start.byte_index..self.end.byte_index]
     }
 
+    /// Returns the character position at which the match starts.
     pub fn start(&self) -> usize {
-        self.start
+        self.start.char_index
     }
 
+    /// Returns the character position immediately after the match.
     pub fn end(&self) -> usize {
-        self.end
+        self.end.char_index
+    }
+
+    /// Returns the byte position at which the match starts.
+    pub fn start_byte(&self) -> usize {
+        self.start.byte_index
+    }
+
+    /// Returns the byte position immediately after the match.
+    pub fn end_byte(&self) -> usize {
+        self.end.byte_index
     }
 
     /// Returns capture at given index.
@@ -58,7 +76,7 @@ impl<'s> Match<'s> {
 pub struct Matches<'p, 's> {
     matcher: Matcher<'p>,
     input: &'s str,
-    next_pos: usize,
+    next_pos: Position,
 }
 
 impl<'p, 's> Matches<'p, 's> {
@@ -66,7 +84,7 @@ impl<'p, 's> Matches<'p, 's> {
         Self {
             matcher: Matcher::new(pattern),
             input,
-            next_pos: 0,
+            next_pos: Position::default(),
         }
     }
 }
@@ -75,10 +93,10 @@ impl<'p, 's> Iterator for Matches<'p, 's> {
     type Item = Match<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let m = self.matcher.find_from(self.input, self.next_pos)?;
+        let m = self.matcher.find_from_position(self.input, self.next_pos)?;
         // always advance least one char past the previous match end to avoid inifite loop on
         // zero-length match.
-        self.next_pos = if m.end > self.next_pos {
+        self.next_pos = if m.end.char_index > self.next_pos.char_index {
             m.end
         } else {
             advance(self.input, m.end)
@@ -89,8 +107,8 @@ impl<'p, 's> Iterator for Matches<'p, 's> {
 
 #[derive(Clone, Copy, Debug)]
 struct CaptureSlot {
-    start: usize,
-    end: Option<usize>, // None while still open
+    start: Position,
+    end: Option<Position>, // None while still open
 }
 
 #[derive(Debug)]
@@ -114,12 +132,13 @@ impl<'p> Matcher<'p> {
         self.find_from(input, 0)
     }
 
-    /// Searches the input for the first match starting at given position.
+    /// Searches the input for the first match starting at given character position.
     pub fn find_from<'s>(&self, input: &'s str, start: usize) -> Option<Match<'s>> {
-        if start > input.len() {
-            return None;
-        }
+        let position = position_at_char(input, start)?;
+        self.find_from_position(input, position)
+    }
 
+    fn find_from_position<'s>(&self, input: &'s str, start: Position) -> Option<Match<'s>> {
         // only try the start if anchored with `^`
         if self.pattern.anchored_start() {
             return self.match_at(input, start);
@@ -131,7 +150,7 @@ impl<'p> Matcher<'p> {
             if let Some(m) = self.match_at(input, pos) {
                 return Some(m);
             }
-            if pos >= input.len() {
+            if pos.byte_index >= input.len() {
                 return None;
             }
             pos = advance(input, pos);
@@ -139,7 +158,7 @@ impl<'p> Matcher<'p> {
     }
 
     /// Atempts to match the pattern to the input at given position.
-    fn match_at<'s>(&self, input: &'s str, position: usize) -> Option<Match<'s>> {
+    fn match_at<'s>(&self, input: &'s str, position: Position) -> Option<Match<'s>> {
         let mut ctx = MatchContext {
             input,
             captures: vec![
@@ -156,9 +175,12 @@ impl<'p> Matcher<'p> {
         let captures = ctx
             .captures
             .into_iter()
-            .map(|slot| CaptureSpan {
-                start: slot.start,
-                end: slot.end.unwrap_or(slot.start),
+            .map(|slot| {
+                let end = slot.end.unwrap_or(slot.start);
+                CaptureSpan {
+                    start: slot.start.byte_index,
+                    end: end.byte_index,
+                }
             })
             .collect();
 
@@ -174,14 +196,14 @@ impl<'p> Matcher<'p> {
     fn do_match<'s>(
         &self,
         ctx: &mut MatchContext<'s>,
-        mut pos: usize,
+        mut pos: Position,
         mut item_index: usize,
-    ) -> Option<usize> {
+    ) -> Option<Position> {
         loop {
             let pattern_sequence = self.pattern.sequence();
             if item_index >= pattern_sequence.len() {
                 return if self.pattern.anchored_end() {
-                    (pos == ctx.input.len()).then_some(pos)
+                    (pos.byte_index == ctx.input.len()).then_some(pos)
                 } else {
                     Some(pos)
                 };
@@ -280,8 +302,13 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    fn match_class<'s>(&self, ctx: &MatchContext<'s>, pos: usize, class: &CharacterClass) -> bool {
-        match ctx.input[pos..].chars().next() {
+    fn match_class<'s>(
+        &self,
+        ctx: &MatchContext<'s>,
+        pos: Position,
+        class: &CharacterClass,
+    ) -> bool {
+        match ctx.input[pos.byte_index..].chars().next() {
             Some(ch) => class.matches(ch),
             None => false,
         }
@@ -291,10 +318,10 @@ impl<'p> Matcher<'p> {
     fn max_expand<'s>(
         &self,
         ctx: &mut MatchContext<'s>,
-        start: usize,
+        start: Position,
         item_index: usize,
         class: &CharacterClass,
-    ) -> Option<usize> {
+    ) -> Option<Position> {
         // consume as many repititions as possible and keep track of their positions
         let mut current_pos = start;
         let mut candidate_positions = vec![current_pos];
@@ -303,8 +330,8 @@ impl<'p> Matcher<'p> {
             candidate_positions.push(current_pos);
         }
 
-        // backtrack from longest match until we find a position where the rest of the pattern also
-        // matches
+        // backtrack from longest match until we find a position where the rest of the pattern
+        // also matches
         for &pos in candidate_positions.iter().rev() {
             if let Some(end) = self.do_match(ctx, pos, item_index + 1) {
                 return Some(end);
@@ -318,10 +345,10 @@ impl<'p> Matcher<'p> {
     fn min_expand<'s>(
         &self,
         ctx: &mut MatchContext<'s>,
-        start: usize,
+        start: Position,
         item_index: usize,
         class: &CharacterClass,
-    ) -> Option<usize> {
+    ) -> Option<Position> {
         // start at zero repetitions and increase until rest of the pattern also matches.
         let mut current_pos = start;
         loop {
@@ -339,15 +366,18 @@ impl<'p> Matcher<'p> {
     fn match_capture_ref<'s>(
         &self,
         ctx: &mut MatchContext<'s>,
-        pos: usize,
+        pos: Position,
         n: u8,
-    ) -> Option<usize> {
+    ) -> Option<Position> {
         let index = (n as usize).checked_sub(1)?;
         let capture = ctx.captures.get(index)?;
         let end = capture.end?;
-        let captured = &ctx.input[capture.start..end];
-        if ctx.input[pos..].starts_with(captured) {
-            Some(pos + captured.len())
+        let captured = &ctx.input[capture.start.byte_index..end.byte_index];
+        if ctx.input[pos.byte_index..].starts_with(captured) {
+            Some(Position {
+                byte_index: pos.byte_index + captured.len(),
+                char_index: pos.char_index + (end.char_index - capture.start.char_index),
+            })
         } else {
             None
         }
@@ -356,11 +386,11 @@ impl<'p> Matcher<'p> {
     fn match_balanced<'s>(
         &self,
         ctx: &mut MatchContext<'s>,
-        start_pos: usize,
+        pos: Position,
         open: char,
         close: char,
-    ) -> Option<usize> {
-        let mut chars = ctx.input[start_pos..].char_indices();
+    ) -> Option<Position> {
+        let mut chars = ctx.input[pos.byte_index..].char_indices();
         let (_, first) = chars.next()?;
 
         if first != open {
@@ -368,15 +398,22 @@ impl<'p> Matcher<'p> {
         }
 
         let mut balance = 1;
+        let mut char_pos = pos.char_index + 1;
+
         for (i, ch) in chars {
             if ch == open {
                 balance += 1;
             } else if ch == close {
                 balance -= 1;
                 if balance == 0 {
-                    return Some(start_pos + i + ch.len_utf8());
+                    return Some(Position {
+                        byte_index: pos.byte_index + i + ch.len_utf8(),
+                        char_index: char_pos + 1,
+                    });
                 }
             }
+
+            char_pos += 1;
         }
 
         None
@@ -385,24 +422,43 @@ impl<'p> Matcher<'p> {
     fn match_frontier<'s>(
         &self,
         ctx: &mut MatchContext<'s>,
-        pos: usize,
+        pos: Position,
         set: &CharacterSet,
     ) -> bool {
-        let previous = if pos == 0 {
+        let previous = if pos.byte_index == 0 {
             '\0'
         } else {
-            ctx.input[..pos].chars().next_back().unwrap_or('\0')
+            ctx.input[..pos.byte_index]
+                .chars()
+                .next_back()
+                .unwrap_or('\0')
         };
-        let next = ctx.input[pos..].chars().next().unwrap_or('\0');
+        let next = ctx.input[pos.byte_index..].chars().next().unwrap_or('\0');
         !set.matches(previous) && set.matches(next)
     }
 }
 
-fn advance(input: &str, pos: usize) -> usize {
-    match input[pos..].chars().next() {
-        Some(ch) => pos + ch.len_utf8(),
+fn advance(input: &str, pos: Position) -> Position {
+    match input[pos.byte_index..].chars().next() {
+        Some(ch) => Position {
+            byte_index: pos.byte_index + ch.len_utf8(),
+            char_index: pos.char_index + 1,
+        },
         None => pos,
     }
+}
+
+fn position_at_char(input: &str, char_index: usize) -> Option<Position> {
+    let mut pos = Position::default();
+
+    while pos.char_index < char_index {
+        if pos.byte_index == input.len() {
+            return None;
+        }
+        pos = advance(input, pos);
+    }
+
+    Some(pos)
 }
 
 /// Whether a parsed character class matches a given `char`.
@@ -1102,7 +1158,7 @@ mod tests {
 
         assert_eq!(result.as_str(), "é");
         assert_eq!(result.start(), 0);
-        assert_eq!(result.end(), 2);
+        assert_eq!(result.end(), 1);
     }
 
     #[test]
@@ -1112,7 +1168,7 @@ mod tests {
 
         assert_eq!(result.as_str(), "😀");
         assert_eq!(result.start(), 0);
-        assert_eq!(result.end(), 4);
+        assert_eq!(result.end(), 1);
     }
 
     #[test]
@@ -1138,11 +1194,11 @@ mod tests {
     }
 
     #[test]
-    fn unicode_capture_span_is_byte_based() {
+    fn unicode_capture_span_is_char_based() {
         let result = Matcher::new(&pattern("(é)")).find("é").unwrap();
 
         assert_eq!(result.start(), 0);
-        assert_eq!(result.end(), 2);
+        assert_eq!(result.end(), 1);
         assert_eq!(result.capture(0), Some("é"));
     }
 
@@ -1172,13 +1228,13 @@ mod tests {
     }
 
     #[test]
-    fn match_offsets_are_byte_offsets() {
-        let input = "hello 안녕";
+    fn match_boundaries_are_char_indices() {
+        let input = "hello 안녕 abc";
         let result = Matcher::new(&pattern("안녕")).find(input).unwrap();
 
-        assert_eq!(&input[result.start()..result.end()], "안녕");
+        assert_eq!(result.as_str(), "안녕");
         assert_eq!(result.start(), 6);
-        assert_eq!(result.end(), 12);
+        assert_eq!(result.end(), 8);
     }
 
     #[test]

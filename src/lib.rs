@@ -295,8 +295,29 @@ fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
     Ok(result)
 }
 
-fn l_find(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
+fn l_find(
+    lua: &Lua,
+    (s, pattern, init, plain): (String, String, Option<i32>, Option<bool>),
+) -> LuaResult<MultiValue> {
+    // TODO: check if error messages are the same
+    // TODO: init
+    // TODO: plain
+    let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+    match p.find(&s) {
+        Some(m) if m.capture_count() > 0 => {
+            let captures = m
+                .captures()
+                .map(|s| s.into_lua(lua))
+                .collect::<LuaResult<Vec<_>>>()?;
+            (m.start() + 1, m.end(), MultiValue::from_vec(captures)).into_lua_multi(lua)
+        }
+        Some(m) => {
+            // no captures so just return the entire match
+            (m.start() + 1, m.end(), m.as_str().to_string()).into_lua_multi(lua)
+        }
+        None => (mlua::Value::Nil,).into_lua_multi(lua),
+    }
 }
 
 fn l_gmatch(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
