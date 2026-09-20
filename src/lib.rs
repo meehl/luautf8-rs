@@ -13,7 +13,7 @@ mod matching;
 mod pattern;
 mod replacement;
 
-use std::{iter::Peekable, str::Chars};
+use std::{iter::Peekable, ops::Deref, str::Chars};
 
 use mlua::{
     Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
@@ -613,8 +613,55 @@ fn l_isvalid(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
     Ok(s.to_str().is_ok())
 }
 
-fn l_clean(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Replaces invalid UTF-8 byte sequences in `s` with replacement (default: U+FFFD).
+/// Returns the clean string and whether the original string was valid.
+fn l_clean(
+    lua: &Lua,
+    (s, replacement): (LuaString, Option<LuaString>),
+) -> LuaResult<(LuaString, bool)> {
+    let replacement = replacement
+        .map(|repl| repl.to_str())
+        .transpose()
+        .map_err(|_| mlua::Error::runtime("replacement string must be valid UTF-8"))?;
+    let repl = replacement.as_deref().unwrap_or("\u{FFFD}");
+
+    let bytes = s.as_bytes();
+    let mut iter = bytes.utf8_chunks();
+
+    let Some(first_chunk) = iter.next() else {
+        // string is empty
+        return Ok((s, true));
+    };
+
+    if first_chunk.invalid().is_empty() {
+        // entire string is valid
+        return Ok((s, true));
+    }
+
+    let mut res = String::with_capacity(bytes.len());
+    res.push_str(first_chunk.valid());
+    let mut in_invalid_run = true;
+
+    for chunk in iter {
+        if !chunk.valid().is_empty() {
+            if in_invalid_run {
+                res.push_str(repl);
+                in_invalid_run = false;
+            }
+
+            res.push_str(chunk.valid());
+        }
+
+        if !chunk.invalid().is_empty() {
+            in_invalid_run = true;
+        }
+    }
+
+    if in_invalid_run {
+        res.push_str(repl);
+    }
+
+    lua.create_string(res).map(|res| (res, false))
 }
 
 /// Returns the byte position position within s of the first invalid UTF-8 byte sequence (1 is the
