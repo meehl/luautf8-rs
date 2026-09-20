@@ -20,6 +20,7 @@ use mlua::{
     Result as LuaResult, Table, Value, Variadic,
 };
 use unicode_normalization::{UnicodeNormalization, is_nfc};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{matching::Match, pattern::Pattern, replacement::ReplacementString};
 
@@ -652,8 +653,53 @@ fn l_normalize_nfc(lua: &Lua, s: LuaString) -> LuaResult<(LuaString, bool)> {
     }
 }
 
-fn l_grapheme_indices(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns an iterator over grapheme clusters of `s`, yielding the inclusive byte range [from, to]
+/// of each cluster.
+fn l_grapheme_indices(
+    lua: &Lua,
+    (s, i, j): (LuaString, Option<i32>, Option<i32>),
+) -> LuaResult<Function> {
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+    let len = s.len();
+    let i = i.map_or(1, |i| normalize_lua_index(i, len));
+    let j = j.map_or(len as i32, |j| normalize_lua_index(j, len));
+
+    if !(i >= 1) {
+        // TODO: use BadArgument
+        return Err(mlua::Error::runtime("bad argument: position out of range"));
+    }
+
+    if !(j <= len as i32) {
+        // TODO: use BadArgument
+        return Err(mlua::Error::runtime("bad argument: position out of range"));
+    }
+
+    let start = (i - 1) as usize;
+    let end = j as usize;
+
+    if !s.is_char_boundary(start) {
+        return Err(mlua::Error::runtime("invalid UTF-8 code"));
+    }
+
+    let mut pos = start;
+    lua.create_function_mut(move |lua, ()| {
+        if pos >= end {
+            return Value::Nil.into_lua_multi(lua);
+        }
+
+        match s[pos..].grapheme_indices(true).next() {
+            Some((offset, grapheme)) => {
+                let grapheme_start = pos + offset;
+                let grapheme_stop = grapheme_start + grapheme.len();
+                pos = grapheme_stop;
+
+                (grapheme_start + 1, grapheme_stop).into_lua_multi(lua)
+            }
+            None => Value::Nil.into_lua_multi(lua),
+        }
+    })
 }
 
 #[cfg(feature = "module")]

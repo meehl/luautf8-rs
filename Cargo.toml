@@ -21,3 +21,4 @@ luajit = ["mlua/luajit"]
 [dependencies]
 mlua = { version = "0.12", features = [] }
 unicode-normalization = { version = "0.1.25", default-features = false }
+unicode-segmentation = "1.13.3"
