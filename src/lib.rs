@@ -19,7 +19,7 @@ use mlua::{
     Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
     Result as LuaResult, Table, Value, Variadic,
 };
-use unicode_normalization::is_nfc;
+use unicode_normalization::{UnicodeNormalization, is_nfc};
 
 use crate::{matching::Match, pattern::Pattern, replacement::ReplacementString};
 
@@ -639,8 +639,17 @@ fn l_isnfc(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
     Ok(is_nfc(&s))
 }
 
-fn l_normalize_nfc(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Normalizes `s` to NFC and returns the normalized string and whether `s` was already normalized.
+fn l_normalize_nfc(lua: &Lua, s: LuaString) -> LuaResult<(LuaString, bool)> {
+    let borrowed_str = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("string is not valid UTF-8"))?;
+    if is_nfc(&borrowed_str) {
+        Ok((s, true))
+    } else {
+        let normalized = borrowed_str.chars().nfc().collect::<String>();
+        lua.create_string(&normalized).map(|s| (s, false))
+    }
 }
 
 fn l_grapheme_indices(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
