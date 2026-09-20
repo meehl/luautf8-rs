@@ -33,7 +33,7 @@ const VERSION: &str = "0.3.0";
 ///
 /// ```no_run
 /// # use mlua::{Lua, Result};
-/// # use luautf8_rs::create_module;
+/// # use luautf8::create_module;
 /// # fn main() -> Result<()> {
 /// let lua = Lua::new();
 /// let module = create_module(&lua)?;
