@@ -19,6 +19,7 @@ use mlua::{
     Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
     Result as LuaResult, Table, Value, Variadic,
 };
+use unicode_normalization::is_nfc;
 
 use crate::{matching::Match, pattern::Pattern, replacement::ReplacementString};
 
@@ -109,7 +110,7 @@ fn normalize_lua_index(pos: i32, len: usize) -> i32 {
 /// right after its end, the function returns nil.
 ///
 /// As a special case, when n is 0 the function returns the start of the encoding of the character
-/// that contains the i-th byte of s.  This function assumes that s is a valid UTF-8 string.
+/// that contains the i-th byte of s. This function assumes that s is a valid UTF-8 string.
 fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<MultiValue> {
     let len = s.len();
     let i = match i {
@@ -629,8 +630,13 @@ fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<i32>)) -> LuaResult<Val
     }
 }
 
-fn l_isnfc(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns whether `s` is in Normalization Form C (NFC).
+/// Raises an error for invalid UTF-8.
+fn l_isnfc(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("string is not valid UTF-8"))?;
+    Ok(is_nfc(&s))
 }
 
 fn l_normalize_nfc(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {

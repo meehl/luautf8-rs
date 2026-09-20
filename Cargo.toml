@@ -8,7 +8,8 @@ name = "luautf8"
 crate-type = ["lib", "cdylib"]
 
 [features]
-default = []
+default = ["std"]
+std = ["unicode-normalization/std"]
 module = ["mlua/module"]
 lua51 = ["mlua/lua51"]
 lua52 = ["mlua/lua52"]
@@ -19,3 +20,4 @@ luajit = ["mlua/luajit"]
 
 [dependencies]
 mlua = { version = "0.12", features = [] }
+unicode-normalization = { version = "0.1.25", default-features = false }
