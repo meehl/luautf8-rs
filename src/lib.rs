@@ -648,7 +648,7 @@ fn l_normalize_nfc(lua: &Lua, s: LuaString) -> LuaResult<(LuaString, bool)> {
         Ok((s, true))
     } else {
         let normalized = borrowed_str.chars().nfc().collect::<String>();
-        lua.create_string(&normalized).map(|s| (s, false))
+        lua.create_string(&normalized).map(|norm| (norm, false))
     }
 }
 
