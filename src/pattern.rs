@@ -28,11 +28,6 @@ impl Pattern {
         Parser::new(source).parse()
     }
 
-    /// Returns whether the pattern occus anywhere in the `input`.
-    pub fn is_match(&self, input: &str) -> bool {
-        self.find(input).is_some()
-    }
-
     /// Finds the first match anywhere in the `input`.
     pub fn find<'s>(&self, input: &'s str) -> Option<Match<'s>> {
         Matcher::new(self).find(input)
@@ -45,9 +40,9 @@ impl Pattern {
 
     /// Replaces all matches using a `Replacement`. `limit` limits the number of replacements to
     /// perform.
-    pub fn replace<'s, F, E>(
+    pub fn replace<F, E>(
         &self,
-        input: &'s str,
+        input: &str,
         replacement: F,
         limit: Option<usize>,
     ) -> Result<(String, usize), E>

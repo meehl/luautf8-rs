@@ -13,7 +13,7 @@ mod matching;
 mod pattern;
 mod replacement;
 
-use std::{iter::Peekable, ops::Deref, str::Chars};
+use std::{iter::Peekable, str::Chars};
 
 use mlua::{
     Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
@@ -300,7 +300,7 @@ fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
 /// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
 fn l_find(
     lua: &Lua,
-    (s, pattern, init, plain): (String, String, Option<i32>, Option<bool>),
+    (s, pattern, _init, _plain): (String, String, Option<i32>, Option<bool>),
 ) -> LuaResult<MultiValue> {
     // TODO: check if error messages are the same
     // TODO: init
@@ -431,7 +431,7 @@ fn l_lower(lua: &Lua, s: Value) -> LuaResult<Value> {
 }
 
 /// Matches pattern in `s`, returning the captures (or the whole match).
-fn l_match(lua: &Lua, (s, pattern, init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
+fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
     // TODO: use same error msgs?
     // TODO: init (start position)
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;

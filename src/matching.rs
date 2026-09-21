@@ -400,6 +400,7 @@ impl<'p> Matcher<'p> {
         let mut balance = 1;
         let mut char_pos = pos.char_index + 1;
 
+        #[allow(clippy::explicit_counter_loop)]
         for (i, ch) in chars {
             if ch == open {
                 balance += 1;
