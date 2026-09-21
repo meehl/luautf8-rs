@@ -454,12 +454,28 @@ fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> Lua
 /// Returns the reverse of `s`. Reverses by character, not by byte. When `lax` is true, invalid
 /// sequences are reversed leniently without raising an error.
 fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaString> {
-    if lax.unwrap_or(false) {
-        todo!()
-    } else {
-        let reversed = s.to_str()?.chars().rev().collect::<String>();
-        lua.create_string(reversed)
+    let bytes = s.as_bytes();
+    let strict = !lax.unwrap_or(false);
+    let mut result = vec![0u8; bytes.len()];
+    let mut pos = bytes.len();
+
+    for chunk in bytes.utf8_chunks() {
+        for ch in chunk.valid().chars() {
+            let len = ch.len_utf8();
+            pos -= len;
+            ch.encode_utf8(&mut result[pos..pos + len]);
+        }
+        let invalid = chunk.invalid();
+        if !invalid.is_empty() {
+            if strict {
+                return Err(mlua::Error::runtime("invalid UTF-8 code"));
+            }
+            pos -= invalid.len();
+            result[pos..pos + invalid.len()].copy_from_slice(invalid);
+        }
     }
+
+    lua.create_string(result)
 }
 
 /// Returns the substring of `s` starting at `start` and ending at `end`.
