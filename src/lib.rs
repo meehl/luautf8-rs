@@ -94,13 +94,13 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
 /// Positive indices are returned unchanged. Negative indices count backward from the end, with
 /// `-1` referring to the last position. A negative index that refers before the first position
 /// results in `0`.
-fn normalize_lua_index(pos: i32, len: usize) -> i32 {
+fn normalize_lua_index(pos: i32, len: usize) -> usize {
     if pos >= 0 {
-        pos
+        pos as usize
     } else if pos.unsigned_abs() as usize > len {
         0
     } else {
-        len as i32 + pos + 1
+        (len as i32 + pos + 1) as usize
     }
 }
 
@@ -180,7 +180,7 @@ fn l_codepoint(
     if !(i >= 1) {
         return Err(mlua::Error::runtime("bad argument: out of bounds"));
     }
-    if !(j <= len as i32) {
+    if !(j <= len) {
         return Err(mlua::Error::runtime("bad argument: out of bounds"));
     }
 
@@ -584,8 +584,65 @@ pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> L
     char::from_u32(value).ok_or(mlua::Error::runtime("invalid codepoint"))
 }
 
-fn l_charpos(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Converts UTF-8 character position `n` to byte position, also returning the code point at the
+/// resulting position. Assumes `s` is valid UTF-8. With one optional argument it is `n`; with two
+/// optional arguments they are `i` (byte position) and `n` (character count after `i`).
+fn l_charpos(
+    lua: &Lua,
+    (s, i_or_n, n): (LuaString, Option<i32>, Option<i32>),
+) -> LuaResult<MultiValue> {
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+
+    let (search, base, from_end, index) = match n {
+        None => {
+            let n = i_or_n.unwrap_or(0);
+            match n {
+                0 => (&s[..], 0, false, 0),
+                n if n > 0 => (&s[..], 0, false, (n - 1) as usize),
+                n => (&s[..], 0, true, (-n - 1) as usize),
+            }
+        }
+        Some(n) => {
+            let i = i_or_n.unwrap_or(1);
+            let pos = normalize_lua_index(i, s.len()).max(1);
+            let pos = pos - 1;
+
+            match n {
+                0 => {
+                    let start = s.floor_char_boundary(pos);
+                    (&s[start..], start, false, 0)
+                }
+                n if n > 0 => {
+                    let start = s.ceil_char_boundary(pos);
+                    let index = if start == pos {
+                        n as usize
+                    } else {
+                        (n - 1) as usize
+                    };
+
+                    (&s[start..], start, false, index)
+                }
+                n => {
+                    let end = s.ceil_char_boundary(pos);
+                    (&s[..end], 0, true, (-n - 1) as usize)
+                }
+            }
+        }
+    };
+
+    let char_index = if from_end {
+        search.char_indices().nth_back(index)
+    } else {
+        search.char_indices().nth(index)
+    };
+
+    if let Some((offset, ch)) = char_index {
+        (base + offset + 1, ch as u32).into_lua_multi(lua)
+    } else {
+        mlua::Nil.into_lua_multi(lua)
+    }
 }
 
 fn l_next(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
@@ -727,14 +784,14 @@ fn l_grapheme_indices(
         .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
     let len = s.len();
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
-    let j = j.map_or(len as i32, |j| normalize_lua_index(j, len));
+    let j = j.map_or(len, |j| normalize_lua_index(j, len));
 
     if !(i >= 1) {
         // TODO: use BadArgument
         return Err(mlua::Error::runtime("bad argument: position out of range"));
     }
 
-    if !(j <= len as i32) {
+    if !(j <= len) {
         // TODO: use BadArgument
         return Err(mlua::Error::runtime("bad argument: position out of range"));
     }
