@@ -15,6 +15,7 @@ mod replacement;
 
 use std::{iter::Peekable, str::Chars};
 
+use icu_casemap::CaseMapper;
 use mlua::{
     Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
     Result as LuaResult, Table, Value, Variadic,
@@ -416,13 +417,24 @@ fn l_len(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
 fn l_lower(lua: &Lua, s: Value) -> LuaResult<Value> {
     match s {
         Value::Integer(n) => {
-            let ch = char::from_u32(n as u32)
-                .ok_or_else(|| mlua::Error::runtime("invalid Unicode codepoint"))?;
-            // NOTE: the lowercase mapping can expand to multiple `char`s.
-            // `luautf8` only returns one codepoint so do the same here.
-            (ch.to_lowercase().next().unwrap() as i64).into_lua(lua)
+            let Some(ch) = char::from_u32(n as u32) else {
+                return (n as u32).into_lua(lua);
+            };
+
+            let mapper = CaseMapper::new();
+            (mapper.simple_lowercase(ch) as u32).into_lua(lua)
         }
-        Value::String(lua_string) => lua_string.to_str()?.to_lowercase().into_lua(lua),
+        Value::String(lua_string) => {
+            let s = lua_string
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+            let mapper = CaseMapper::new();
+            let mut result = String::with_capacity(s.len());
+            for ch in s.chars() {
+                result.push(mapper.simple_lowercase(ch));
+            }
+            result.into_lua(lua)
+        }
         other => Err(mlua::Error::runtime(format!(
             "number/string expected, got {}",
             other.type_name()
@@ -500,13 +512,24 @@ fn l_sub(_lua: &Lua, (s, start, end): (String, i32, Option<i32>)) -> LuaResult<S
 fn l_upper(lua: &Lua, s: Value) -> LuaResult<Value> {
     match s {
         Value::Integer(n) => {
-            let ch = char::from_u32(n as u32)
-                .ok_or_else(|| mlua::Error::runtime("invalid Unicode codepoint"))?;
-            // NOTE: the uppercase mapping can expand to multiple `char`s.
-            // `luautf8` only returns one codepoint so do the same here.
-            (ch.to_uppercase().next().unwrap() as i64).into_lua(lua)
+            let Some(ch) = char::from_u32(n as u32) else {
+                return (n as u32).into_lua(lua);
+            };
+
+            let mapper = CaseMapper::new();
+            (mapper.simple_uppercase(ch) as u32).into_lua(lua)
         }
-        Value::String(lua_string) => lua_string.to_str()?.to_uppercase().into_lua(lua),
+        Value::String(lua_string) => {
+            let s = lua_string
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+            let mapper = CaseMapper::new();
+            let mut result = String::with_capacity(s.len());
+            for ch in s.chars() {
+                result.push(mapper.simple_uppercase(ch));
+            }
+            result.into_lua(lua)
+        }
         other => Err(mlua::Error::runtime(format!(
             "number/string expected, got {}",
             other.type_name()
