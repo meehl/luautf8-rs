@@ -692,8 +692,33 @@ fn l_widthlimit(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_title(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Converts `s` to titlecase. With an integer argument, converts a code point.
+fn l_title(lua: &Lua, s: Value) -> LuaResult<Value> {
+    match s {
+        Value::Integer(n) => {
+            let Some(ch) = char::from_u32(n as u32) else {
+                return (n as u32).into_lua(lua);
+            };
+
+            let mapper = CaseMapper::new();
+            (mapper.simple_titlecase(ch) as u32).into_lua(lua)
+        }
+        Value::String(lua_string) => {
+            let s = lua_string
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+            let mapper = CaseMapper::new();
+            let mut result = String::with_capacity(s.len());
+            for ch in s.chars() {
+                result.push(mapper.simple_titlecase(ch));
+            }
+            result.into_lua(lua)
+        }
+        other => Err(mlua::Error::runtime(format!(
+            "number/string expected, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn l_fold(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
