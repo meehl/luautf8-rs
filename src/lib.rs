@@ -750,8 +750,26 @@ fn l_fold(lua: &Lua, s: Value) -> LuaResult<Value> {
     }
 }
 
-fn l_ncasecmp(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+// Compares a and b without case: -1 if a < b, 0 if equal, 1 if a > b.
+fn l_ncasecmp(_lua: &Lua, (a, b): (LuaString, LuaString)) -> LuaResult<i32> {
+    let a = a
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+    let b = b
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+
+    let mapper = CaseMapper::new();
+    let ordering = a
+        .chars()
+        .map(|ch| mapper.simple_fold(ch))
+        .cmp(b.chars().map(|ch| mapper.simple_fold(ch)));
+
+    Ok(match ordering {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    })
 }
 
 /// Returns `true` if `s` is a valid UTF-8 string.
