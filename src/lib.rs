@@ -413,35 +413,6 @@ fn l_len(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-/// Converts `s` to lowercase. With an integer argument, converts a code point.
-fn l_lower(lua: &Lua, s: Value) -> LuaResult<Value> {
-    match s {
-        Value::Integer(n) => {
-            let Some(ch) = char::from_u32(n as u32) else {
-                return (n as u32).into_lua(lua);
-            };
-
-            let mapper = CaseMapper::new();
-            (mapper.simple_lowercase(ch) as u32).into_lua(lua)
-        }
-        Value::String(lua_string) => {
-            let s = lua_string
-                .to_str()
-                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-            let mapper = CaseMapper::new();
-            let mut result = String::with_capacity(s.len());
-            for ch in s.chars() {
-                result.push(mapper.simple_lowercase(ch));
-            }
-            result.into_lua(lua)
-        }
-        other => Err(mlua::Error::runtime(format!(
-            "number/string expected, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
 /// Matches pattern in `s`, returning the captures (or the whole match).
 fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
     // TODO: use same error msgs?
@@ -505,35 +476,6 @@ fn l_sub(_lua: &Lua, (s, start, end): (String, i32, Option<i32>)) -> LuaResult<S
             .skip((i - 1) as usize)
             .take((j - i + 1) as usize)
             .collect())
-    }
-}
-
-/// Converts `s` to uppercase. With an integer argument, converts a code point.
-fn l_upper(lua: &Lua, s: Value) -> LuaResult<Value> {
-    match s {
-        Value::Integer(n) => {
-            let Some(ch) = char::from_u32(n as u32) else {
-                return (n as u32).into_lua(lua);
-            };
-
-            let mapper = CaseMapper::new();
-            (mapper.simple_uppercase(ch) as u32).into_lua(lua)
-        }
-        Value::String(lua_string) => {
-            let s = lua_string
-                .to_str()
-                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-            let mapper = CaseMapper::new();
-            let mut result = String::with_capacity(s.len());
-            for ch in s.chars() {
-                result.push(mapper.simple_uppercase(ch));
-            }
-            result.into_lua(lua)
-        }
-        other => Err(mlua::Error::runtime(format!(
-            "number/string expected, got {}",
-            other.type_name()
-        ))),
     }
 }
 
@@ -690,64 +632,6 @@ fn l_widthindex(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
 
 fn l_widthlimit(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
-}
-
-/// Converts `s` to titlecase. With an integer argument, converts a code point.
-fn l_title(lua: &Lua, s: Value) -> LuaResult<Value> {
-    match s {
-        Value::Integer(n) => {
-            let Some(ch) = char::from_u32(n as u32) else {
-                return (n as u32).into_lua(lua);
-            };
-
-            let mapper = CaseMapper::new();
-            (mapper.simple_titlecase(ch) as u32).into_lua(lua)
-        }
-        Value::String(lua_string) => {
-            let s = lua_string
-                .to_str()
-                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-            let mapper = CaseMapper::new();
-            let mut result = String::with_capacity(s.len());
-            for ch in s.chars() {
-                result.push(mapper.simple_titlecase(ch));
-            }
-            result.into_lua(lua)
-        }
-        other => Err(mlua::Error::runtime(format!(
-            "number/string expected, got {}",
-            other.type_name()
-        ))),
-    }
-}
-
-/// Converts `s` to folded case. With an integer argument, converts a code point.
-fn l_fold(lua: &Lua, s: Value) -> LuaResult<Value> {
-    match s {
-        Value::Integer(n) => {
-            let Some(ch) = char::from_u32(n as u32) else {
-                return (n as u32).into_lua(lua);
-            };
-
-            let mapper = CaseMapper::new();
-            (mapper.simple_fold(ch) as u32).into_lua(lua)
-        }
-        Value::String(lua_string) => {
-            let s = lua_string
-                .to_str()
-                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-            let mapper = CaseMapper::new();
-            let mut result = String::with_capacity(s.len());
-            for ch in s.chars() {
-                result.push(mapper.simple_fold(ch));
-            }
-            result.into_lua(lua)
-        }
-        other => Err(mlua::Error::runtime(format!(
-            "number/string expected, got {}",
-            other.type_name()
-        ))),
-    }
 }
 
 // Compares a and b without case: -1 if a < b, 0 if equal, 1 if a > b.
@@ -912,6 +796,47 @@ fn l_grapheme_indices(
         }
     })
 }
+
+macro_rules! make_case_mapper {
+    ($fn_name:ident, $variant:ident, $description:literal) => {
+        /// Converts `s` to $description. With an integer argument, converts a code point.
+        fn $fn_name(lua: &Lua, s: Value) -> LuaResult<Value> {
+            match s {
+                Value::Integer(n) => {
+                    let Some(ch) = char::from_u32(n as u32) else {
+                        return (n as u32).into_lua(lua);
+                    };
+
+                    let mapper = CaseMapper::new();
+                    (mapper.$variant(ch) as u32).into_lua(lua)
+                }
+                Value::String(lua_string) => {
+                    let s = lua_string
+                        .to_str()
+                        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+
+                    let mapper = CaseMapper::new();
+                    let mut result = String::with_capacity(s.len());
+
+                    for ch in s.chars() {
+                        result.push(mapper.$variant(ch));
+                    }
+
+                    result.into_lua(lua)
+                }
+                other => Err(mlua::Error::runtime(format!(
+                    "number/string expected, got {}",
+                    other.type_name()
+                ))),
+            }
+        }
+    };
+}
+
+make_case_mapper!(l_lower, simple_lowercase, "lowercase");
+make_case_mapper!(l_upper, simple_uppercase, "uppercase");
+make_case_mapper!(l_title, simple_titlecase, "titlecase");
+make_case_mapper!(l_fold, simple_fold, "folded case");
 
 #[cfg(feature = "module")]
 #[mlua::lua_module]
