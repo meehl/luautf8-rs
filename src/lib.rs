@@ -409,8 +409,53 @@ fn l_gsub(
     pattern.replace(&s, replace, limit)
 }
 
-fn l_len(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the number of UTF-8 characters in s, or nil plus an error message if s is not a valid
+/// UTF-8 string. When lax is true, invalid sequences are counted leniently instead of failing.
+fn l_len(
+    lua: &Lua,
+    (s, i, j, lax): (LuaString, Option<i32>, Option<i32>, Option<bool>),
+) -> LuaResult<MultiValue> {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let strict = !lax.unwrap_or(false);
+    let i = i.map_or(1, |i| normalize_lua_index(i, len));
+    let j = j.map_or(len, |j| normalize_lua_index(j, len));
+
+    if !(1..=len).contains(&i) {
+        // TODO: use mlua::Error:BadArgument?
+        return Err(mlua::Error::runtime(
+            "bad argument: initial position out of bounds",
+        ));
+    }
+
+    if !(1..=len).contains(&j) {
+        // TODO: use mlua::Error:BadArgument?
+        return Err(mlua::Error::runtime(
+            "bad argument: final position out of bounds",
+        ));
+    }
+
+    let start = i - 1;
+    let end = j;
+
+    let mut pos = start;
+    let mut result = 0;
+    for chunk in bytes[start..end].utf8_chunks() {
+        for ch in chunk.valid().chars() {
+            result += 1;
+            pos += ch.len_utf8();
+        }
+        let invalid = chunk.invalid();
+        if !invalid.is_empty() {
+            if strict {
+                return (mlua::Nil, pos + 1).into_lua_multi(lua);
+            }
+            result += 1;
+            pos += invalid.len();
+        }
+    }
+
+    (result,).into_lua_multi(lua)
 }
 
 /// Matches pattern in `s`, returning the captures (or the whole match).
