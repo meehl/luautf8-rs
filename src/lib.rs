@@ -16,8 +16,12 @@ mod replacement;
 use std::{iter::Peekable, str::Chars};
 
 use icu_casemap::CaseMapper;
+use icu_properties::{
+    CodePointMapData, CodePointSetData,
+    props::{DefaultIgnorableCodePoint, EastAsianWidth, GraphemeExtend},
+};
 use mlua::{
-    Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
+    FromLua, Function, Integer as LuaInteger, IntoLua, IntoLuaMulti, Lua, LuaString, MultiValue,
     Result as LuaResult, Table, Value, Variadic,
 };
 use unicode_normalization::{UnicodeNormalization, is_nfc};
@@ -667,8 +671,97 @@ fn l_remove(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_width(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+fn ch_width(ch: char, ambi_width: usize, default_width: usize) -> usize {
+    if CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(ch) {
+        return default_width;
+    }
+
+    if CodePointSetData::new::<GraphemeExtend>().contains(ch) {
+        return default_width;
+    }
+
+    match CodePointMapData::<EastAsianWidth>::new().get(ch) {
+        EastAsianWidth::Wide | EastAsianWidth::Fullwidth => 2,
+        EastAsianWidth::Ambiguous => ambi_width,
+        _ => 1,
+    }
+}
+
+fn next_optional<T: FromLua>(
+    lua: &Lua,
+    args: &mut impl Iterator<Item = Value>,
+) -> LuaResult<Option<T>> {
+    match args.next() {
+        None | Some(Value::Nil) => Ok(None),
+        Some(value) => T::from_lua(value, lua).map(Some),
+    }
+}
+
+/// Calculates the display width of `s` (or of a substring) in columns, or of a single code point
+/// when given a number.
+fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
+    let mut args = args.into_iter();
+
+    let first_arg = args
+        .next()
+        .ok_or_else(|| mlua::Error::runtime("expected string or integer"))?;
+
+    match first_arg {
+        Value::String(lua_string) => {
+            let len = lua_string.as_bytes().len();
+            let s = lua_string
+                .to_str()
+                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+            let i = next_optional::<i32>(lua, &mut args)?.unwrap_or(1);
+            let j = next_optional::<i32>(lua, &mut args)?.unwrap_or(len as i32);
+            let ambi_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(1) as usize;
+            let default_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(0) as usize;
+
+            let i = normalize_lua_index(i, len);
+            let j = normalize_lua_index(j, len);
+
+            if !(1 <= i && i - 1 <= len) {
+                // TODO: use mlua::Error:BadArgument?
+                return Err(mlua::Error::runtime(
+                    "bad argument: initial position out of bounds",
+                ));
+            }
+
+            if !(j <= len) {
+                // TODO: use mlua::Error:BadArgument?
+                return Err(mlua::Error::runtime(
+                    "bad argument: final position out of bounds",
+                ));
+            }
+
+            let start = i - 1;
+            let end = j;
+
+            let total = s
+                .get(start..end)
+                .ok_or(mlua::Error::runtime("invalid UTF-8 code"))?
+                .chars()
+                .fold(0, |acc, ch| acc + ch_width(ch, ambi_width, default_width));
+
+            Ok(total as i64)
+        }
+        Value::Integer(codepoint) => {
+            let ambi_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(1) as usize;
+            let default_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(0) as usize;
+
+            let Some(ch) = char::from_u32(codepoint as u32) else {
+                return Ok(1);
+            };
+
+            Ok(ch_width(ch, ambi_width, default_width) as i64)
+        }
+        other => {
+            return Err(mlua::Error::runtime(format!(
+                "number/string expected, got {}",
+                other.type_name()
+            )));
+        }
+    }
 }
 
 fn l_widthindex(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {

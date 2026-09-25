@@ -178,6 +178,7 @@ name = "luautf8-rs"
 version = "0.1.0"
 dependencies = [
  "icu_casemap",
+ "icu_properties",
  "mlua",
  "unicode-normalization",
  "unicode-segmentation",
