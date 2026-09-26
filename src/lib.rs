@@ -764,8 +764,65 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
     }
 }
 
-fn l_widthindex(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns the character index idx at display width in s, plus offset (which column within idx-th
+/// character) and the character's width.
+fn l_widthindex(
+    lua: &Lua,
+    (s, width, i, j, ambi_width, default_width): (
+        LuaString,
+        i32,
+        Option<i32>,
+        Option<i32>,
+        Option<i32>,
+        Option<i32>,
+    ),
+) -> LuaResult<MultiValue> {
+    let len = s.as_bytes().len();
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+
+    let i = i.map_or(1, |i| normalize_lua_index(i, len));
+    let j = j.map_or(len, |j| normalize_lua_index(j, len));
+    let ambi_width = ambi_width.unwrap_or(1) as usize;
+    let default_width = default_width.unwrap_or(0) as usize;
+
+    if !(1 <= i && i - 1 <= len) {
+        // TODO: use mlua::Error:BadArgument?
+        return Err(mlua::Error::runtime(
+            "bad argument: initial position out of bounds",
+        ));
+    }
+
+    if !(j <= len) {
+        // TODO: use mlua::Error:BadArgument?
+        return Err(mlua::Error::runtime(
+            "bad argument: final position out of bounds",
+        ));
+    }
+
+    let start = i - 1;
+    let end = j;
+
+    let chars = s
+        .get(start..end)
+        .ok_or(mlua::Error::runtime("invalid UTF-8 code"))?
+        .chars();
+
+    let mut index = 0;
+    let mut width = width as usize;
+    for ch in chars {
+        let ch_width = ch_width(ch, ambi_width, default_width);
+
+        if width <= ch_width {
+            return (index + 1, width, ch_width).into_lua_multi(lua);
+        }
+
+        index += 1;
+        width -= ch_width;
+    }
+
+    return index.into_lua_multi(lua);
 }
 
 fn l_widthlimit(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
