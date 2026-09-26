@@ -825,8 +825,90 @@ fn l_widthindex(
     return index.into_lua_multi(lua);
 }
 
-fn l_widthlimit(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Finds the byte position where truncation should occur to fit within a display width limit
+/// (negative limit truncates from the back).
+fn l_widthlimit(
+    lua: &Lua,
+    (s, limit, i, j, ambi_width, default_width): (
+        LuaString,
+        i32,
+        Option<i32>,
+        Option<i32>,
+        Option<i32>,
+        Option<i32>,
+    ),
+) -> LuaResult<MultiValue> {
+    let len = s.as_bytes().len();
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+
+    let i = i.map_or(1, |i| normalize_lua_index(i, len));
+    let j = j.map_or(len, |j| normalize_lua_index(j, len));
+    let ambi_width = ambi_width.unwrap_or(1) as usize;
+    let default_width = default_width.unwrap_or(0) as usize;
+
+    if !(1 <= i && i - 1 <= len) {
+        // TODO: use mlua::Error:BadArgument?
+        return Err(mlua::Error::runtime(
+            "bad argument: initial position out of bounds",
+        ));
+    }
+
+    if !(j <= len) {
+        // TODO: use mlua::Error:BadArgument?
+        return Err(mlua::Error::runtime(
+            "bad argument: final position out of bounds",
+        ));
+    }
+
+    let start = i - 1;
+    let end = j;
+    let mut width = limit;
+    let chars = s
+        .get(start..end)
+        .ok_or(mlua::Error::runtime("invalid UTF-8 code"))?
+        .char_indices();
+
+    let mut pos = 0;
+
+    let index = if width >= 0 {
+        for (byte_pos, ch) in chars {
+            let ch_width = ch_width(ch, ambi_width, default_width);
+            if width < ch_width as i32 {
+                break;
+            }
+
+            width -= ch_width as i32;
+            pos = byte_pos + ch.len_utf8();
+
+            if width == 0 {
+                break;
+            }
+        }
+
+        start + pos
+    } else {
+        let mut pos = end - start;
+
+        for (byte_pos, ch) in chars.rev() {
+            let ch_width = ch_width(ch, ambi_width, default_width);
+            if -width < ch_width as i32 {
+                break;
+            }
+
+            width += ch_width as i32;
+            pos = byte_pos;
+
+            if width == 0 {
+                break;
+            }
+        }
+
+        start + pos + 1
+    };
+
+    (index, width).into_lua_multi(lua)
 }
 
 // Compares a and b without case: -1 if a < b, 0 if equal, 1 if a > b.
