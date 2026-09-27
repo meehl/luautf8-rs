@@ -105,6 +105,36 @@ impl<'p, 's> Iterator for Matches<'p, 's> {
     }
 }
 
+/// Owned version of `Matches` that takes ownership of the pattern and haystack.
+pub struct OwnedMatches {
+    pattern: Pattern,
+    input: String,
+    next_pos: Position,
+}
+
+impl OwnedMatches {
+    pub fn new(pattern: Pattern, input: String) -> Self {
+        Self {
+            pattern,
+            input,
+            next_pos: Position::default(),
+        }
+    }
+
+    pub fn next(&mut self) -> Option<Match<'_>> {
+        let matcher = Matcher::new(&self.pattern);
+        let m = matcher.find_from_position(&self.input, self.next_pos)?;
+
+        self.next_pos = if m.end.char_index > self.next_pos.char_index {
+            m.end
+        } else {
+            advance(&self.input, m.end)
+        };
+
+        Some(m)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct CaptureSlot {
     start: Position,

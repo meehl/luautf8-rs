@@ -327,8 +327,30 @@ fn l_find(
     }
 }
 
-fn l_gmatch(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Returns an iterator over all non-overlapping matches of pattern in `s`.
+fn l_gmatch(lua: &Lua, (s, pattern): (LuaString, LuaString)) -> LuaResult<Function> {
+    let s = s
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?
+        .to_owned();
+    let pattern_str = pattern
+        .to_str()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+    let p = Pattern::parse(&pattern_str).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+
+    let mut matches = p.into_find_all(s);
+
+    lua.create_function_mut(move |lua, ()| match matches.next() {
+        Some(m) if m.capture_count() > 0 => {
+            let captures = m
+                .captures()
+                .map(|s| s.into_lua(lua))
+                .collect::<LuaResult<Vec<_>>>()?;
+            Ok(MultiValue::from_vec(captures))
+        }
+        Some(m) => (m.as_str().to_string(),).into_lua_multi(lua),
+        None => (mlua::Value::Nil,).into_lua_multi(lua),
+    })
 }
 
 enum LuaReplacement {

@@ -6,7 +6,7 @@
 use std::fmt;
 
 use crate::{
-    matching::{Match, Matcher, Matches},
+    matching::{Match, Matcher, Matches, OwnedMatches},
     replacement::Replacer,
 };
 
@@ -36,6 +36,11 @@ impl Pattern {
     /// Creates an iterator over all matches.
     pub fn find_all<'p, 's>(&'p self, input: &'s str) -> Matches<'p, 's> {
         Matches::new(self, input)
+    }
+
+    /// Owned version of `find_all`.
+    pub fn into_find_all(self, input: String) -> OwnedMatches {
+        OwnedMatches::new(self, input)
     }
 
     /// Replaces all matches using a `Replacement`. `limit` limits the number of replacements to
