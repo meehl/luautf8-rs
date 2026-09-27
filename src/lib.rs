@@ -669,6 +669,15 @@ fn bad_arg(to: &str, pos: usize, expected: &str, got: &str) -> mlua::Error {
     ))
 }
 
+fn next_char_pos(bytes: &[u8]) -> Option<usize> {
+    bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
+        .map(|(i, _)| i)
+        .nth(1)
+}
+
 fn char_pos(bytes: &[u8], n: isize) -> Option<usize> {
     if n >= 0 {
         bytes
@@ -676,7 +685,7 @@ fn char_pos(bytes: &[u8], n: isize) -> Option<usize> {
             .enumerate()
             .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
             .map(|(i, _)| i)
-            // char right after the end returns the lenth
+            // char right after the end returns the length
             .chain(std::iter::once(bytes.len()))
             .nth((n - 1) as usize)
     } else {
@@ -726,8 +735,28 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
     lua.create_string(buf)
 }
 
-fn l_remove(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+/// Deletes a substring from s: from i to j (inclusive), or the last character when neither is
+/// given.
+fn l_remove(lua: &Lua, (s, i, j): (LuaString, Option<i32>, Option<i32>)) -> LuaResult<LuaString> {
+    let s = s.as_bytes();
+    let i = i.unwrap_or(-1);
+    let j = j.unwrap_or(-1);
+
+    let start = char_pos(&s, i as isize).unwrap_or_else(|| if i > 0 { s.len() } else { 0 });
+    let end = char_pos(&s, j as isize).map_or_else(
+        || if i > 0 { s.len() } else { 0 },
+        |end| {
+            next_char_pos(&s[end..])
+                .map(|offset| end + offset)
+                .unwrap_or(s.len())
+        },
+    );
+
+    let mut buf = Vec::with_capacity(s.len());
+    buf.extend_from_slice(&s[..start]);
+    buf.extend_from_slice(&s[end..]);
+
+    lua.create_string(buf)
 }
 
 fn ch_width(ch: char, ambi_width: usize, default_width: usize) -> usize {
