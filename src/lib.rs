@@ -663,8 +663,67 @@ fn l_next(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn l_insert(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+fn bad_arg(to: &str, pos: usize, expected: &str, got: &str) -> mlua::Error {
+    mlua::Error::runtime(format!(
+        "bad argument #{pos} to '{to}' ({expected} expected, got {got})"
+    ))
+}
+
+fn char_pos(bytes: &[u8], n: isize) -> Option<usize> {
+    if n >= 0 {
+        bytes
+            .iter()
+            .enumerate()
+            .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
+            .map(|(i, _)| i)
+            // char right after the end returns the lenth
+            .chain(std::iter::once(bytes.len()))
+            .nth((n - 1) as usize)
+    } else {
+        bytes
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
+            .nth((-n - 1) as usize)
+            .map(|(i, _)| i)
+    }
+}
+
+/// Inserts substring into s: before the n-th character (default: append).
+fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaString> {
+    let mut args = args.into_iter();
+    let arg2 = args.next();
+    let (idx, subs_arg, subs_pos): (Option<i64>, Option<Value>, usize) = match &arg2 {
+        Some(Value::Integer(i)) => (Some(*i), args.next(), 3),
+        Some(Value::Number(n)) => (Some(*n as i64), args.next(), 3),
+        _ => (None, arg2, 2),
+    };
+    let subs = match subs_arg {
+        Some(Value::String(s)) => s.as_bytes(),
+        Some(other) => return Err(bad_arg("insert", subs_pos, "string", other.type_name())),
+        None => return Err(bad_arg("insert", subs_pos, "string", "no value")),
+    };
+
+    let s = s.as_bytes();
+    let mut buf = Vec::with_capacity(s.len() + subs.len());
+    if let Some(idx) = idx {
+        let at = if idx == 0 {
+            s.len()
+        } else {
+            char_pos(&s, idx as isize).ok_or_else(|| {
+                mlua::Error::runtime("bad argument #2 to 'insert' (invalid index)")
+            })?
+        };
+        buf.extend_from_slice(&s[..at]);
+        buf.extend_from_slice(&subs);
+        buf.extend_from_slice(&s[at..]);
+    } else {
+        buf.extend_from_slice(&s);
+        buf.extend_from_slice(&subs);
+    };
+
+    lua.create_string(buf)
 }
 
 fn l_remove(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
