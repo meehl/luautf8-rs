@@ -77,6 +77,7 @@ pub struct Matches<'p, 's> {
     matcher: Matcher<'p>,
     input: &'s str,
     next_pos: Position,
+    done: bool,
 }
 
 impl<'p, 's> Matches<'p, 's> {
@@ -85,6 +86,7 @@ impl<'p, 's> Matches<'p, 's> {
             matcher: Matcher::new(pattern),
             input,
             next_pos: Position::default(),
+            done: false,
         }
     }
 }
@@ -93,14 +95,24 @@ impl<'p, 's> Iterator for Matches<'p, 's> {
     type Item = Match<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
         let m = self.matcher.find_from_position(self.input, self.next_pos)?;
-        // always advance least one char past the previous match end to avoid inifite loop on
-        // zero-length match.
-        self.next_pos = if m.end.char_index > self.next_pos.char_index {
-            m.end
+
+        if m.end.char_index > self.next_pos.char_index {
+            self.next_pos = m.end;
+        } else if m.end.byte_index < self.input.len() {
+            // zero-length match.
+            // move past one character.
+            self.next_pos = advance(self.input, m.end);
         } else {
-            advance(self.input, m.end)
-        };
+            // zero-length match at EOF.
+            // return it but don't allow another search from the same position.
+            self.done = true;
+        }
+
         Some(m)
     }
 }
@@ -110,6 +122,7 @@ pub struct OwnedMatches {
     pattern: Pattern,
     input: String,
     next_pos: Position,
+    done: bool,
 }
 
 impl OwnedMatches {
@@ -118,18 +131,29 @@ impl OwnedMatches {
             pattern,
             input,
             next_pos: Position::default(),
+            done: false,
         }
     }
 
     pub fn next(&mut self) -> Option<Match<'_>> {
+        if self.done {
+            return None;
+        }
+
         let matcher = Matcher::new(&self.pattern);
         let m = matcher.find_from_position(&self.input, self.next_pos)?;
 
-        self.next_pos = if m.end.char_index > self.next_pos.char_index {
-            m.end
+        if m.end.char_index > self.next_pos.char_index {
+            self.next_pos = m.end;
+        } else if m.end.byte_index < self.input.len() {
+            // zero-length match.
+            // move past one character.
+            self.next_pos = advance(&self.input, m.end);
         } else {
-            advance(&self.input, m.end)
-        };
+            // zero-length match at EOF.
+            // return it but don't allow another search from the same position.
+            self.done = true;
+        }
 
         Some(m)
     }
@@ -1361,5 +1385,19 @@ mod tests {
         let result = Matcher::new(&pattern("(.-)x")).find("x").unwrap();
 
         assert_eq!(result.capture(0), Some(""));
+    }
+
+    #[test]
+    fn empty_capture_matches_every_position() {
+        let pattern = Pattern::parse("()").unwrap();
+        let matches = pattern.find_all("abc").collect::<Vec<_>>();
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 0);
+        assert_eq!(matches[1].start(), 1);
+        assert_eq!(matches[1].end(), 1);
+        assert_eq!(matches[2].start(), 2);
+        assert_eq!(matches[2].end(), 2);
+        assert_eq!(matches[3].start(), 3);
+        assert_eq!(matches[3].end(), 3);
     }
 }
