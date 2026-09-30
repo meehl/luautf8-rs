@@ -145,8 +145,13 @@ impl<'s> Parser<'s> {
             Some('(') => {
                 let index = self.next_capture;
                 self.next_capture += 1;
-                self.open_capture_stack.push(index);
-                Ok(Item::CaptureOpen(index))
+
+                if self.consume_if(')') {
+                    Ok(Item::PositionCapture(index))
+                } else {
+                    self.open_capture_stack.push(index);
+                    Ok(Item::CaptureOpen(index))
+                }
             }
             Some(')') => {
                 let index = self
@@ -378,6 +383,8 @@ pub(crate) enum Item {
     CaptureOpen(usize),
     /// Closing parenthesis of a capture.
     CaptureClose(usize),
+    /// Position capture, i.e. `()`
+    PositionCapture(usize),
 }
 
 /// A Lua character class.
@@ -1227,31 +1234,21 @@ mod tests {
     }
 
     #[test]
-    fn parses_empty_capture() {
+    fn parses_position_capture() {
         let pattern = parse("()");
 
-        assert_eq!(
-            pattern.sequence,
-            vec![Item::CaptureOpen(0), Item::CaptureClose(0),]
-        );
-
+        assert_eq!(pattern.sequence, vec![Item::PositionCapture(0)]);
         assert_eq!(pattern.capture_count, 1);
     }
 
     #[test]
-    fn parses_multiple_empty_captures() {
+    fn parses_multiple_position_captures() {
         let pattern = parse("()()");
 
         assert_eq!(
             pattern.sequence,
-            vec![
-                Item::CaptureOpen(0),
-                Item::CaptureClose(0),
-                Item::CaptureOpen(1),
-                Item::CaptureClose(1),
-            ]
+            vec![Item::PositionCapture(0), Item::PositionCapture(1),]
         );
-
         assert_eq!(pattern.capture_count, 2);
     }
 

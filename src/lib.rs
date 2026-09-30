@@ -27,7 +27,11 @@ use mlua::{
 use unicode_normalization::{UnicodeNormalization, is_nfc};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{matching::Match, pattern::Pattern, replacement::ReplacementString};
+use crate::{
+    matching::{CaptureValue, Match},
+    pattern::Pattern,
+    replacement::ReplacementString,
+};
 
 // TODO: pattern depends on lua version
 const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
@@ -315,7 +319,10 @@ fn l_find(
         Some(m) if m.capture_count() > 0 => {
             let captures = m
                 .captures()
-                .map(|s| s.into_lua(lua))
+                .map(|c| match c {
+                    CaptureValue::Text(text) => text.into_lua(lua),
+                    CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
+                })
                 .collect::<LuaResult<Vec<_>>>()?;
             (m.start() + 1, m.end(), MultiValue::from_vec(captures)).into_lua_multi(lua)
         }
@@ -344,7 +351,10 @@ fn l_gmatch(lua: &Lua, (s, pattern): (LuaString, LuaString)) -> LuaResult<Functi
         Some(m) if m.capture_count() > 0 => {
             let captures = m
                 .captures()
-                .map(|s| s.into_lua(lua))
+                .map(|c| match c {
+                    CaptureValue::Text(text) => text.into_lua(lua),
+                    CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
+                })
                 .collect::<LuaResult<Vec<_>>>()?;
             Ok(MultiValue::from_vec(captures))
         }
@@ -396,7 +406,16 @@ fn l_gsub(
         LuaReplacement::String(replacement_string) => Ok(Some(replacement_string.apply(m))),
         LuaReplacement::Table(table) => {
             // use first capture as key, or whole match if no captures
-            let key = m.capture(0).unwrap_or_else(|| m.as_str());
+            let key = m
+                .capture(0)
+                .map_or_else(
+                    || m.as_str().into_lua(lua),
+                    |c| match c {
+                        CaptureValue::Text(text) => text.into_lua(lua),
+                        CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
+                    },
+                )
+                .unwrap();
             let value = table.get(key)?;
             match value {
                 Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
@@ -414,7 +433,12 @@ fn l_gsub(
             } else {
                 Variadic::from(
                     m.captures()
-                        .map(|capture| lua.create_string(capture))
+                        .map(|c| match c {
+                            CaptureValue::Text(text) => lua.create_string(text),
+                            CaptureValue::Position(char_pos) => {
+                                lua.create_string(format!("{}", char_pos + 1))
+                            }
+                        })
                         .collect::<LuaResult<Vec<_>>>()?,
                 )
             };
@@ -493,7 +517,10 @@ fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> Lua
         Some(m) if m.capture_count() > 0 => {
             let captures = m
                 .captures()
-                .map(|s| s.into_lua(lua))
+                .map(|c| match c {
+                    CaptureValue::Text(text) => text.into_lua(lua),
+                    CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
+                })
                 .collect::<LuaResult<Vec<_>>>()?;
             Ok(MultiValue::from_vec(captures))
         }

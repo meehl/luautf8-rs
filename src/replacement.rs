@@ -1,4 +1,7 @@
-use crate::{matching::Match, pattern::Pattern};
+use crate::{
+    matching::{CaptureValue, Match},
+    pattern::Pattern,
+};
 
 pub struct Replacer<'p> {
     pattern: &'p Pattern,
@@ -123,11 +126,13 @@ impl ReplacementString {
             match part {
                 ReplacementPart::Text(s) => output.push_str(s),
                 ReplacementPart::WholeMatch => output.push_str(m.as_str()),
-                ReplacementPart::CaptureRef(i) => {
-                    if let Some(capture) = m.capture((i - 1) as usize) {
-                        output.push_str(capture)
+                ReplacementPart::CaptureRef(i) => match m.capture((i - 1) as usize) {
+                    Some(CaptureValue::Text(text)) => output.push_str(text),
+                    Some(CaptureValue::Position(char_pos)) => {
+                        output.push_str(&format!("{}", char_pos + 1))
                     }
-                }
+                    None => unreachable!("rejected by parser"),
+                },
             }
         }
 

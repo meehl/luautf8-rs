@@ -4,7 +4,7 @@ use crate::pattern::{
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Position {
+pub struct Position {
     byte_index: usize,
     char_index: usize,
 }
@@ -15,14 +15,31 @@ pub struct Match<'s> {
     input: &'s str,
     start: Position,
     end: Position,
-    captures: Vec<CaptureSpan>,
+    captures: Vec<Capture>,
 }
 
-/// Byte offsets into the input string at which a capture starts and ends.
 #[derive(Clone, Copy, Debug)]
-struct CaptureSpan {
-    start: usize,
-    end: usize,
+enum Capture {
+    Text { start: Position, end: Position },
+    Position(Position),
+}
+
+impl Capture {
+    pub fn value<'s>(&self, input: &'s str) -> CaptureValue<'s> {
+        match *self {
+            Capture::Text { start, end } => {
+                CaptureValue::Text(&input[start.byte_index..end.byte_index])
+            }
+            Capture::Position(p) => CaptureValue::Position(p.char_index),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureValue<'s> {
+    Text(&'s str),
+    /// 0-based character index
+    Position(usize),
 }
 
 impl<'s> Match<'s> {
@@ -52,17 +69,13 @@ impl<'s> Match<'s> {
     }
 
     /// Returns capture at given index.
-    pub fn capture(&self, index: usize) -> Option<&'s str> {
-        self.captures
-            .get(index)
-            .map(|span| &self.input[span.start..span.end])
+    pub fn capture(&self, index: usize) -> Option<CaptureValue<'s>> {
+        self.captures.get(index).map(|c| c.value(self.input))
     }
 
     /// Returns iterator over captures.
-    pub fn captures(&self) -> impl Iterator<Item = &'s str> {
-        self.captures
-            .iter()
-            .map(|span| &self.input[span.start..span.end])
+    pub fn captures(&self) -> impl Iterator<Item = CaptureValue<'s>> {
+        self.captures.iter().map(|c| c.value(self.input))
     }
 
     /// Returns number of captures.
@@ -160,15 +173,18 @@ impl OwnedMatches {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct CaptureSlot {
-    start: Position,
-    end: Option<Position>, // None while still open
+enum CaptureSlot {
+    Text {
+        start: Position,
+        end: Option<Position>, // None while still open
+    },
+    Position(Position),
 }
 
 #[derive(Debug)]
 struct MatchContext<'s> {
     input: &'s str,
-    captures: Vec<CaptureSlot>,
+    captures: Vec<Option<CaptureSlot>>,
 }
 
 #[derive(Debug)]
@@ -215,13 +231,7 @@ impl<'p> Matcher<'p> {
     fn match_at<'s>(&self, input: &'s str, position: Position) -> Option<Match<'s>> {
         let mut ctx = MatchContext {
             input,
-            captures: vec![
-                CaptureSlot {
-                    start: position,
-                    end: None
-                };
-                self.pattern.capture_count()
-            ],
+            captures: vec![None; self.pattern.capture_count()],
         };
 
         let end = self.do_match(&mut ctx, position, 0)?;
@@ -230,10 +240,13 @@ impl<'p> Matcher<'p> {
             .captures
             .into_iter()
             .map(|slot| {
-                let end = slot.end.unwrap_or(slot.start);
-                CaptureSpan {
-                    start: slot.start.byte_index,
-                    end: end.byte_index,
+                let slot = slot.expect("not unset");
+                match slot {
+                    CaptureSlot::Text { start, end } => {
+                        let end = end.unwrap_or(start);
+                        Capture::Text { start, end }
+                    }
+                    CaptureSlot::Position(position) => Capture::Position(position),
                 }
             })
             .collect();
@@ -333,10 +346,10 @@ impl<'p> Matcher<'p> {
                 }
                 Item::CaptureOpen(capture_index) => {
                     let saved = ctx.captures[*capture_index];
-                    ctx.captures[*capture_index] = CaptureSlot {
+                    ctx.captures[*capture_index] = Some(CaptureSlot::Text {
                         start: pos,
                         end: None,
-                    };
+                    });
                     let result = self.do_match(ctx, pos, item_index + 1);
                     if result.is_none() {
                         ctx.captures[*capture_index] = saved;
@@ -345,7 +358,25 @@ impl<'p> Matcher<'p> {
                 }
                 Item::CaptureClose(capture_index) => {
                     let saved = ctx.captures[*capture_index];
-                    ctx.captures[*capture_index].end = Some(pos);
+
+                    match &mut ctx.captures[*capture_index] {
+                        Some(CaptureSlot::Text { end, .. }) => {
+                            *end = Some(pos);
+                        }
+                        _ => unreachable!("capture close without an open text capture"),
+                    }
+
+                    let result = self.do_match(ctx, pos, item_index + 1);
+                    if result.is_none() {
+                        ctx.captures[*capture_index] = saved;
+                    }
+                    return result;
+                }
+                Item::PositionCapture(capture_index) => {
+                    let saved = ctx.captures[*capture_index];
+
+                    ctx.captures[*capture_index] = Some(CaptureSlot::Position(pos));
+
                     let result = self.do_match(ctx, pos, item_index + 1);
                     if result.is_none() {
                         ctx.captures[*capture_index] = saved;
@@ -424,13 +455,22 @@ impl<'p> Matcher<'p> {
         n: u8,
     ) -> Option<Position> {
         let index = (n as usize).checked_sub(1)?;
-        let capture = ctx.captures.get(index)?;
-        let end = capture.end?;
-        let captured = &ctx.input[capture.start.byte_index..end.byte_index];
+        let capture = ctx.captures.get(index)?.as_ref()?;
+
+        let CaptureSlot::Text {
+            start,
+            end: Some(end),
+        } = capture
+        else {
+            return None;
+        };
+
+        let captured = &ctx.input[start.byte_index..end.byte_index];
+
         if ctx.input[pos.byte_index..].starts_with(captured) {
             Some(Position {
                 byte_index: pos.byte_index + captured.len(),
-                char_index: pos.char_index + (end.char_index - capture.start.char_index),
+                char_index: pos.char_index + (end.char_index - start.char_index),
             })
         } else {
             None
@@ -587,7 +627,12 @@ mod tests {
         Matcher::new(&pattern(p)).find(input).map(|m| {
             (
                 m.as_str().to_owned(),
-                m.captures().map(str::to_owned).collect(),
+                m.captures()
+                    .map(|capture| match capture {
+                        CaptureValue::Text(text) => text.to_string(),
+                        CaptureValue::Position(char_pos) => char_pos.to_string(),
+                    })
+                    .collect(),
             )
         })
     }
@@ -975,45 +1020,42 @@ mod tests {
 
     #[test]
     fn nested_captures() {
-        let result = Matcher::new(&pattern("(a(b(c)))")).find("abc").unwrap();
-
-        assert_eq!(result.as_str(), "abc");
-        assert_eq!(result.capture(0), Some("abc"));
-        assert_eq!(result.capture(1), Some("bc"));
-        assert_eq!(result.capture(2), Some("c"));
+        assert_eq!(
+            find_with_captures("(a(b(c)))", "abc"),
+            Some(("abc".into(), vec!["abc".into(), "bc".into(), "c".into()]))
+        );
     }
 
     #[test]
     fn capture_can_be_empty() {
-        let result = Matcher::new(&pattern("(a*)b")).find("b").unwrap();
-
-        assert_eq!(result.as_str(), "b");
-        assert_eq!(result.capture(0), Some(""));
+        assert_eq!(
+            find_with_captures("(a*)b", "b"),
+            Some(("b".into(), vec!["".into()]))
+        );
     }
 
     #[test]
     fn capture_contains_greedy_match() {
-        let result = Matcher::new(&pattern("(a*)b")).find("aaab").unwrap();
-
-        assert_eq!(result.as_str(), "aaab");
-        assert_eq!(result.capture(0), Some("aaa"));
+        assert_eq!(
+            find_with_captures("(a*)b", "aaab"),
+            Some(("aaab".into(), vec!["aaa".into()]))
+        );
     }
 
     #[test]
     fn capture_backtracks() {
-        let result = Matcher::new(&pattern("(a*)a")).find("aaa").unwrap();
-
-        assert_eq!(result.as_str(), "aaa");
-        assert_eq!(result.capture(0), Some("aa"));
+        assert_eq!(
+            find_with_captures("(a*)a", "aaa"),
+            Some(("aaa".into(), vec!["aa".into()]))
+        );
     }
 
     #[test]
     fn capture_backtracks_inside_nested_capture() {
-        let result = Matcher::new(&pattern("((a*)a)")).find("aaa").unwrap();
-
-        assert_eq!(result.as_str(), "aaa");
-        assert_eq!(result.capture(0), Some("aaa"));
-        assert_eq!(result.capture(1), Some("aa"));
+        assert_eq!(
+            find_with_captures("((a*)a)", "aaa"),
+            Some(("aaa".into(), vec!["aaa".into(), "aa".into()]))
+        );
     }
 
     #[test]
@@ -1037,49 +1079,40 @@ mod tests {
 
     #[test]
     fn capture_reference_uses_latest_capture_value() {
-        let result = Matcher::new(&pattern("(a)(b) %1%2")).find("ab ab").unwrap();
-        assert_eq!(result.as_str(), "ab ab");
-        assert_eq!(result.capture(0), Some("a"));
-        assert_eq!(result.capture(1), Some("b"));
+        assert_eq!(
+            find_with_captures("(a)(b) %1%2", "ab ab"),
+            Some(("ab ab".into(), vec!["a".into(), "b".into()]))
+        );
     }
 
     #[test]
     fn capture_reference_after_nested_capture() {
-        let result = Matcher::new(&pattern("(a(b))%1")).find("abab").unwrap();
-
-        assert_eq!(result.as_str(), "abab");
-        assert_eq!(result.capture(0), Some("ab"));
-        assert_eq!(result.capture(1), Some("b"));
+        assert_eq!(
+            find_with_captures("(a(b))%1", "abab"),
+            Some(("abab".into(), vec!["ab".into(), "b".into()]))
+        );
     }
 
     #[test]
     fn failed_backtracking_does_not_corrupt_capture_state() {
-        let result = Matcher::new(&pattern("(a*)ab")).find("aaab");
-
-        assert!(result.is_some());
-
-        let result = result.unwrap();
-
-        assert_eq!(result.as_str(), "aaab");
-        assert_eq!(result.capture(0), Some("aa"));
+        let result = find_with_captures("(a*)ab", "aaab");
+        assert_eq!(result, Some(("aaab".into(), vec!["aa".into()])));
     }
 
     #[test]
     fn capture_state_is_restored_between_backtracking_branches() {
-        let result = Matcher::new(&pattern("(a*)(b*)c")).find("aaabbc").unwrap();
-
-        assert_eq!(result.as_str(), "aaabbc");
-        assert_eq!(result.capture(0), Some("aaa"));
-        assert_eq!(result.capture(1), Some("bb"));
+        assert_eq!(
+            find_with_captures("(a*)(b*)c", "aaabbc"),
+            Some(("aaabbc".into(), vec!["aaa".into(), "bb".into()]))
+        );
     }
 
     #[test]
     fn nested_capture_backtracking() {
-        let result = Matcher::new(&pattern("((a*)b*)c")).find("aaabbc").unwrap();
-
-        assert_eq!(result.as_str(), "aaabbc");
-        assert_eq!(result.capture(0), Some("aaabb"));
-        assert_eq!(result.capture(1), Some("aaa"));
+        assert_eq!(
+            find_with_captures("((a*)b*)c", "aaabbc"),
+            Some(("aaabbc".into(), vec!["aaabb".into(), "aaa".into()]))
+        );
     }
 
     #[test]
@@ -1243,9 +1276,10 @@ mod tests {
 
     #[test]
     fn unicode_capture() {
-        let result = Matcher::new(&pattern("(%a+)")).find("hello 안녕").unwrap();
-
-        assert_eq!(result.capture(0), Some("hello"));
+        assert_eq!(
+            find_with_captures("(%a+)", "안녕 hello"),
+            Some(("안녕".into(), vec!["안녕".into()]))
+        );
     }
 
     #[test]
@@ -1254,7 +1288,7 @@ mod tests {
 
         assert_eq!(result.start(), 0);
         assert_eq!(result.end(), 1);
-        assert_eq!(result.capture(0), Some("é"));
+        assert_eq!(result.capture(0), Some(CaptureValue::Text("é")));
     }
 
     #[test]
@@ -1290,14 +1324,6 @@ mod tests {
         assert_eq!(result.as_str(), "안녕");
         assert_eq!(result.start(), 6);
         assert_eq!(result.end(), 8);
-    }
-
-    #[test]
-    fn capture_offsets_are_byte_offsets() {
-        let input = "hello 안녕";
-        let result = Matcher::new(&pattern("(안녕)")).find(input).unwrap();
-
-        assert_eq!(result.capture(0), Some("안녕"));
     }
 
     #[test]
@@ -1351,40 +1377,42 @@ mod tests {
 
     #[test]
     fn greedy_capture_followed_by_literal() {
-        let result = Matcher::new(&pattern("(.*)x")).find("abcx").unwrap();
-
-        assert_eq!(result.as_str(), "abcx");
-        assert_eq!(result.capture(0), Some("abc"));
+        assert_eq!(
+            find_with_captures("(.*)x", "abcx"),
+            Some(("abcx".into(), vec!["abc".into()]))
+        );
     }
 
     #[test]
     fn greedy_capture_backtracks_to_last_literal() {
-        let result = Matcher::new(&pattern("(.*)x")).find("abcxdefx").unwrap();
-
-        assert_eq!(result.as_str(), "abcxdefx");
-        assert_eq!(result.capture(0), Some("abcxdef"));
+        assert_eq!(
+            find_with_captures("(.*)x", "abcxdefx"),
+            Some(("abcxdefx".into(), vec!["abcxdef".into()]))
+        );
     }
 
     #[test]
     fn lazy_capture_stops_at_first_literal() {
-        let result = Matcher::new(&pattern("(.-)x")).find("abcxdefx").unwrap();
-
-        assert_eq!(result.as_str(), "abcx");
-        assert_eq!(result.capture(0), Some("abc"));
+        assert_eq!(
+            find_with_captures("(.-)x", "abcxdefx"),
+            Some(("abcx".into(), vec!["abc".into()]))
+        );
     }
 
     #[test]
     fn greedy_capture_can_backtrack_to_empty() {
-        let result = Matcher::new(&pattern("(.*)x")).find("x").unwrap();
-
-        assert_eq!(result.capture(0), Some(""));
+        assert_eq!(
+            find_with_captures("(.*)x", "x"),
+            Some(("x".into(), vec!["".into()]))
+        );
     }
 
     #[test]
     fn lazy_capture_can_match_empty() {
-        let result = Matcher::new(&pattern("(.-)x")).find("x").unwrap();
-
-        assert_eq!(result.capture(0), Some(""));
+        assert_eq!(
+            find_with_captures("(.-)x", "x"),
+            Some(("x".into(), vec!["".into()]))
+        );
     }
 
     #[test]
