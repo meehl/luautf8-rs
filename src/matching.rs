@@ -520,14 +520,10 @@ impl<'p> Matcher<'p> {
         pos: Position,
         set: &CharacterSet,
     ) -> bool {
-        let previous = if pos.byte_index == 0 {
-            '\0'
-        } else {
-            ctx.input[..pos.byte_index]
-                .chars()
-                .next_back()
-                .unwrap_or('\0')
-        };
+        let previous = ctx.input[..pos.byte_index]
+            .chars()
+            .next_back()
+            .unwrap_or('\0');
         let next = ctx.input[pos.byte_index..].chars().next().unwrap_or('\0');
         !set.matches(previous) && set.matches(next)
     }
