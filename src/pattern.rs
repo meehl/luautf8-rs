@@ -1,7 +1,7 @@
 //! Data structures to represent a Lua pattern and the associated parser.
 //! Used for reference:
-//! - https://www.lua.org/pil/20.2.html
-//! - https://www.lua.org/manual/5.3/manual.html#6.4.1
+//! - `<https://www.lua.org/pil/20.2.html>`
+//! - `<https://www.lua.org/manual/5.3/manual.html#6.4.1>`
 
 use std::fmt;
 
@@ -157,7 +157,7 @@ impl<'s> Parser<'s> {
                 let index = self
                     .open_capture_stack
                     .pop()
-                    .ok_or(self.error("unmatched capture close"))?;
+                    .ok_or_else(|| self.error("unmatched capture close"))?;
                 Ok(Item::CaptureClose(index))
             }
             Some('[') => {
@@ -263,17 +263,18 @@ impl<'s> Parser<'s> {
         match ch {
             'b' => self.parse_balanced(),
             'f' => self.parse_frontier(),
-            '1'..='9' => Ok(Item::CaptureRef(ch.to_digit(10).unwrap() as u8)),
+            '1'..='9' => Ok(Item::CaptureRef(
+                ch.to_digit(10).expect("ch is a digit") as u8
+            )),
             '0' => Err(self.error("invalid capture index &0")),
             c if c.is_ascii_alphabetic() => {
+                let modifier = self.parse_modifier();
                 if let Some(class) = PredefinedClass::from_char(c) {
-                    let modifier = self.parse_modifier();
                     Ok(Item::Class {
                         class: CharacterClass::Predefined(class),
                         modifier,
                     })
                 } else {
-                    let modifier = self.parse_modifier();
                     Ok(Item::Class {
                         class: CharacterClass::Literal(c),
                         modifier,
@@ -356,7 +357,7 @@ impl<'s> Parser<'s> {
         if self.consume_if(expected) {
             Ok(())
         } else {
-            Err(self.error(format!("expected '{}'", expected)))
+            Err(self.error(format!("expected '{expected}'")))
         }
     }
 

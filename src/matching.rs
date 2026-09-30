@@ -27,10 +27,10 @@ enum Capture {
 impl Capture {
     pub fn value<'s>(&self, input: &'s str) -> CaptureValue<'s> {
         match *self {
-            Capture::Text { start, end } => {
+            Self::Text { start, end } => {
                 CaptureValue::Text(&input[start.byte_index..end.byte_index])
             }
-            Capture::Position(p) => CaptureValue::Position(p.char_index),
+            Self::Position(p) => CaptureValue::Position(p.char_index),
         }
     }
 }
@@ -278,13 +278,15 @@ impl<'p> Matcher<'p> {
 
             match &pattern_sequence[item_index] {
                 Item::Class { class, modifier } => {
-                    let does_match = self.match_class(ctx, pos, class);
+                    let does_match = Self::match_class(ctx, pos, class);
 
                     if !does_match {
                         match modifier {
-                            Some(Modifier::ZeroOrMoreGreedy)
-                            | Some(Modifier::ZeroOrMoreLazy)
-                            | Some(Modifier::ZeroOrOne) => {
+                            Some(
+                                Modifier::ZeroOrMoreGreedy
+                                | Modifier::ZeroOrMoreLazy
+                                | Modifier::ZeroOrOne,
+                            ) => {
                                 // modifier makes class optional, so just continue
                                 item_index += 1;
                                 continue;
@@ -301,7 +303,6 @@ impl<'p> Matcher<'p> {
                         None => {
                             pos = advance(ctx.input, pos);
                             item_index += 1;
-                            continue;
                         }
                         Some(Modifier::ZeroOrMoreGreedy) => {
                             return self.max_expand(ctx, pos, item_index, class);
@@ -321,28 +322,22 @@ impl<'p> Matcher<'p> {
                             }
                             // otherwise fallback to zero occurrences
                             item_index += 1;
-                            continue;
                         }
                     }
                 }
                 Item::CaptureRef(n) => {
-                    let end = self.match_capture_ref(ctx, pos, *n)?;
-                    pos = end;
+                    pos = Self::match_capture_ref(ctx, pos, *n)?;
                     item_index += 1;
-                    continue;
                 }
                 Item::Balanced { open, close } => {
-                    let end = self.match_balanced(ctx, pos, *open, *close)?;
-                    pos = end;
+                    pos = self.match_balanced(ctx, pos, *open, *close)?;
                     item_index += 1;
-                    continue;
                 }
                 Item::Frontier(character_set) => {
-                    if self.match_frontier(ctx, pos, character_set) {
-                        item_index += 1;
-                        continue;
+                    if !Self::match_frontier(ctx, pos, character_set) {
+                        return None;
                     }
-                    return None;
+                    item_index += 1;
                 }
                 Item::CaptureOpen(capture_index) => {
                     let saved = ctx.captures[*capture_index];
@@ -387,11 +382,11 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    fn match_class(&self, ctx: &MatchContext, pos: Position, class: &CharacterClass) -> bool {
-        match ctx.input[pos.byte_index..].chars().next() {
-            Some(ch) => class.matches(ch),
-            None => false,
-        }
+    fn match_class(ctx: &MatchContext, pos: Position, class: &CharacterClass) -> bool {
+        ctx.input[pos.byte_index..]
+            .chars()
+            .next()
+            .is_some_and(|ch| class.matches(ch))
     }
 
     /// Greedily matches as many repetitions of `class` as possible.
@@ -405,7 +400,7 @@ impl<'p> Matcher<'p> {
         // consume as many repetitions as possible and keep track of their positions
         let mut current_pos = start;
         let mut candidate_positions = vec![current_pos];
-        while self.match_class(ctx, current_pos, class) {
+        while Self::match_class(ctx, current_pos, class) {
             current_pos = advance(ctx.input, current_pos);
             candidate_positions.push(current_pos);
         }
@@ -435,7 +430,7 @@ impl<'p> Matcher<'p> {
             if let Some(end) = self.do_match(ctx, current_pos, item_index + 1) {
                 return Some(end);
             }
-            if self.match_class(ctx, current_pos, class) {
+            if Self::match_class(ctx, current_pos, class) {
                 current_pos = advance(ctx.input, current_pos);
             } else {
                 return None;
@@ -443,7 +438,7 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    fn match_capture_ref(&self, ctx: &MatchContext, pos: Position, n: u8) -> Option<Position> {
+    fn match_capture_ref(ctx: &MatchContext, pos: Position, n: u8) -> Option<Position> {
         let index = (n as usize).checked_sub(1)?;
         let capture = ctx.captures.get(index)?.as_ref()?;
 
@@ -457,14 +452,12 @@ impl<'p> Matcher<'p> {
 
         let captured = &ctx.input[start.byte_index..end.byte_index];
 
-        if ctx.input[pos.byte_index..].starts_with(captured) {
-            Some(Position {
+        ctx.input[pos.byte_index..]
+            .starts_with(captured)
+            .then(|| Position {
                 byte_index: pos.byte_index + captured.len(),
                 char_index: pos.char_index + (end.char_index - start.char_index),
             })
-        } else {
-            None
-        }
     }
 
     fn match_balanced(
@@ -499,7 +492,7 @@ impl<'p> Matcher<'p> {
         None
     }
 
-    fn match_frontier(&self, ctx: &MatchContext, pos: Position, set: &CharacterSet) -> bool {
+    fn match_frontier(ctx: &MatchContext, pos: Position, set: &CharacterSet) -> bool {
         let previous = ctx.input[..pos.byte_index]
             .chars()
             .next_back()
@@ -510,13 +503,13 @@ impl<'p> Matcher<'p> {
 }
 
 fn advance(input: &str, pos: Position) -> Position {
-    match input[pos.byte_index..].chars().next() {
-        Some(ch) => Position {
+    input[pos.byte_index..]
+        .chars()
+        .next()
+        .map_or(pos, |ch| Position {
             byte_index: pos.byte_index + ch.len_utf8(),
             char_index: pos.char_index + 1,
-        },
-        None => pos,
-    }
+        })
 }
 
 fn position_at_char(input: &str, char_index: usize) -> Option<Position> {
@@ -540,10 +533,10 @@ trait MatchesClass {
 impl MatchesClass for CharacterClass {
     fn matches(&self, ch: char) -> bool {
         match self {
-            CharacterClass::Literal(c) => *c == ch,
-            CharacterClass::Any => true,
-            CharacterClass::Predefined(pc) => pc.matches(ch),
-            CharacterClass::Set(set) => set.matches(ch),
+            Self::Literal(c) => *c == ch,
+            Self::Any => true,
+            Self::Predefined(pc) => pc.matches(ch),
+            Self::Set(set) => set.matches(ch),
         }
     }
 }

@@ -300,7 +300,8 @@ fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
     let mut result = String::with_capacity(args.len());
     for arg in args {
         // TODO: use `BadArgument` error
-        let ch = char::from_u32(arg as u32).ok_or(mlua::Error::runtime("value out of range"))?;
+        let ch =
+            char::from_u32(arg as u32).ok_or_else(|| mlua::Error::runtime("value out of range"))?;
         result.push(ch);
     }
     Ok(result)
@@ -591,15 +592,15 @@ fn l_escape(_lua: &Lua, s: String) -> LuaResult<String> {
 
         match chars.peek() {
             Some(d) if d.is_ascii_digit() || d == &'{' => {
-                result.push(parse_escaped_codepoint(&mut chars, 10)?)
+                result.push(parse_escaped_codepoint(&mut chars, 10)?);
             }
             Some('u' | 'U') => {
                 chars.next();
-                result.push(parse_escaped_codepoint(&mut chars, 10)?)
+                result.push(parse_escaped_codepoint(&mut chars, 10)?);
             }
             Some('x' | 'X') => {
                 chars.next();
-                result.push(parse_escaped_codepoint(&mut chars, 16)?)
+                result.push(parse_escaped_codepoint(&mut chars, 16)?);
             }
             Some(other) => {
                 result.push(*other);
@@ -624,7 +625,7 @@ pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> L
                 value = value
                     .checked_mul(radix)
                     .and_then(|v| v.checked_add(c.to_digit(radix).expect("c is a digit")))
-                    .ok_or(mlua::Error::runtime("invalid codepoint"))?;
+                    .ok_or_else(|| mlua::Error::runtime("invalid codepoint"))?;
                 digits += 1;
                 chars.next();
             }
@@ -644,7 +645,7 @@ pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> L
         return Err(mlua::Error::runtime("invalid escape: expected digit"));
     }
 
-    char::from_u32(value).ok_or(mlua::Error::runtime("invalid codepoint"))
+    char::from_u32(value).ok_or_else(|| mlua::Error::runtime("invalid codepoint"))
 }
 
 /// Converts UTF-8 character position `n` to byte position, also returning the code point at the
@@ -779,7 +780,7 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
     } else {
         buf.extend_from_slice(&s);
         buf.extend_from_slice(&subs);
-    };
+    }
 
     lua.create_string(buf)
 }
@@ -794,11 +795,7 @@ fn l_remove(lua: &Lua, (s, i, j): (LuaString, Option<i32>, Option<i32>)) -> LuaR
     let start = char_pos(&s, i as isize).unwrap_or_else(|| if i > 0 { s.len() } else { 0 });
     let end = char_pos(&s, j as isize).map_or_else(
         || if i > 0 { s.len() } else { 0 },
-        |end| {
-            next_char_pos(&s[end..])
-                .map(|offset| end + offset)
-                .unwrap_or(s.len())
-        },
+        |end| next_char_pos(&s[end..]).map_or(s.len(), |offset| end + offset),
     );
 
     let mut buf = Vec::with_capacity(s.len());
@@ -876,7 +873,7 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
 
             let total = s
                 .get(start..end)
-                .ok_or(mlua::Error::runtime("invalid UTF-8 code"))?
+                .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
                 .chars()
                 .fold(0, |acc, ch| acc + ch_width(ch, ambi_width, default_width));
 
@@ -941,7 +938,7 @@ fn l_widthindex(
 
     let chars = s
         .get(start..end)
-        .ok_or(mlua::Error::runtime("invalid UTF-8 code"))?
+        .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
         .chars();
 
     let mut index = 0;
@@ -1002,7 +999,7 @@ fn l_widthlimit(
     let mut width = limit;
     let chars = s
         .get(start..end)
-        .ok_or(mlua::Error::runtime("invalid UTF-8 code"))?
+        .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
         .char_indices();
 
     let mut pos = 0;

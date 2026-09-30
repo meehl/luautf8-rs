@@ -129,7 +129,7 @@ impl ReplacementString {
                 ReplacementPart::CaptureRef(i) => match m.capture((i - 1) as usize) {
                     Some(CaptureValue::Text(text)) => output.push_str(text),
                     Some(CaptureValue::Position(char_pos)) => {
-                        output.push_str(&format!("{}", char_pos + 1))
+                        output.push_str(&format!("{}", char_pos + 1));
                     }
                     None => unreachable!("rejected by parser"),
                 },
