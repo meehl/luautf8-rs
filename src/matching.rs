@@ -260,9 +260,9 @@ impl<'p> Matcher<'p> {
     }
 
     // Recursive match, similar to Lua's `match` in `lstrlib.c`.
-    fn do_match<'s>(
+    fn do_match(
         &self,
-        ctx: &mut MatchContext<'s>,
+        ctx: &mut MatchContext,
         mut pos: Position,
         mut item_index: usize,
     ) -> Option<Position> {
@@ -387,12 +387,7 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    fn match_class<'s>(
-        &self,
-        ctx: &MatchContext<'s>,
-        pos: Position,
-        class: &CharacterClass,
-    ) -> bool {
+    fn match_class(&self, ctx: &MatchContext, pos: Position, class: &CharacterClass) -> bool {
         match ctx.input[pos.byte_index..].chars().next() {
             Some(ch) => class.matches(ch),
             None => false,
@@ -400,9 +395,9 @@ impl<'p> Matcher<'p> {
     }
 
     /// Greedily matches as many repetitions of `class` as possible.
-    fn max_expand<'s>(
+    fn max_expand(
         &self,
-        ctx: &mut MatchContext<'s>,
+        ctx: &mut MatchContext,
         start: Position,
         item_index: usize,
         class: &CharacterClass,
@@ -427,9 +422,9 @@ impl<'p> Matcher<'p> {
     }
 
     /// Matches as few repetitions of `class` as possible.
-    fn min_expand<'s>(
+    fn min_expand(
         &self,
-        ctx: &mut MatchContext<'s>,
+        ctx: &mut MatchContext,
         start: Position,
         item_index: usize,
         class: &CharacterClass,
@@ -448,12 +443,7 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    fn match_capture_ref<'s>(
-        &self,
-        ctx: &mut MatchContext<'s>,
-        pos: Position,
-        n: u8,
-    ) -> Option<Position> {
+    fn match_capture_ref(&self, ctx: &MatchContext, pos: Position, n: u8) -> Option<Position> {
         let index = (n as usize).checked_sub(1)?;
         let capture = ctx.captures.get(index)?.as_ref()?;
 
@@ -477,9 +467,9 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    fn match_balanced<'s>(
+    fn match_balanced(
         &self,
-        ctx: &mut MatchContext<'s>,
+        ctx: &MatchContext,
         pos: Position,
         open: char,
         close: char,
@@ -514,12 +504,7 @@ impl<'p> Matcher<'p> {
         None
     }
 
-    fn match_frontier<'s>(
-        &self,
-        ctx: &mut MatchContext<'s>,
-        pos: Position,
-        set: &CharacterSet,
-    ) -> bool {
+    fn match_frontier(&self, ctx: &MatchContext, pos: Position, set: &CharacterSet) -> bool {
         let previous = ctx.input[..pos.byte_index]
             .chars()
             .next_back()
