@@ -317,24 +317,39 @@ fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
 /// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
 fn l_find(
     lua: &Lua,
-    (s, pattern, _init, _plain): (String, String, Option<i32>, Option<bool>),
+    (s, pattern, _init, plain): (String, String, Option<i32>, Option<bool>),
 ) -> LuaResult<MultiValue> {
     // TODO: check if error messages are the same
     // TODO: init
-    // TODO: plain
-    let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
-    match p.find(&s) {
-        Some(m) => {
-            let pos = vec![
-                Value::Integer((m.start() + 1) as _),
-                Value::Integer(m.end() as _),
-            ];
-            Ok(MultiValue::from_iter(
-                pos.into_iter()
-                    .chain(m.values().map(|c| capture_value_to_lua(lua, c))),
-            ))
+    if plain.unwrap_or(false) {
+        let start_offset = 0; // TODO: convert `init` to byte offset and assign it here
+        match s[start_offset..].find(&pattern) {
+            Some(found) => {
+                let start_byte = start_offset + found;
+                let start_char = s[..start_byte].chars().count();
+                let end_char = start_char + pattern.chars().count();
+                Ok(MultiValue::from(vec![
+                    Value::Integer((start_char + 1) as _),
+                    Value::Integer(end_char as _),
+                ]))
+            }
+            None => (mlua::Value::Nil,).into_lua_multi(lua),
         }
-        None => (mlua::Value::Nil,).into_lua_multi(lua),
+    } else {
+        let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+        match p.find(&s) {
+            Some(m) => {
+                let pos = vec![
+                    Value::Integer((m.start() + 1) as _),
+                    Value::Integer(m.end() as _),
+                ];
+                Ok(MultiValue::from_iter(
+                    pos.into_iter()
+                        .chain(m.values().map(|c| capture_value_to_lua(lua, c))),
+                ))
+            }
+            None => (mlua::Value::Nil,).into_lua_multi(lua),
+        }
     }
 }
 
