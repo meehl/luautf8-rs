@@ -227,7 +227,7 @@ impl<'p> Matcher<'p> {
         }
     }
 
-    /// Atempts to match the pattern to the input at given position.
+    /// Attempts to match the pattern to the input at given position.
     fn match_at<'s>(&self, input: &'s str, position: Position) -> Option<Match<'s>> {
         let mut ctx = MatchContext {
             input,
@@ -290,7 +290,7 @@ impl<'p> Matcher<'p> {
                                 continue;
                             }
                             None | Some(Modifier::OneOrMore) => {
-                                // class not optinal, didn't match so return
+                                // class not optional, didn't match so return
                                 return None;
                             }
                         }
@@ -407,7 +407,7 @@ impl<'p> Matcher<'p> {
         item_index: usize,
         class: &CharacterClass,
     ) -> Option<Position> {
-        // consume as many repititions as possible and keep track of their positions
+        // consume as many repetitions as possible and keep track of their positions
         let mut current_pos = start;
         let mut candidate_positions = vec![current_pos];
         while self.match_class(ctx, current_pos, class) {
