@@ -199,8 +199,8 @@ fn l_codepoint(
         return Ok(Variadic::new());
     }
 
-    let start = (i - 1) as usize;
-    let end = j as usize;
+    let start = i - 1;
+    let end = j;
     let mut result = Variadic::new();
     let mut pos = start;
     while pos < end {
@@ -892,12 +892,10 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
 
             Ok(ch_width(ch, ambi_width, default_width) as i64)
         }
-        other => {
-            return Err(mlua::Error::runtime(format!(
-                "number/string expected, got {}",
-                other.type_name()
-            )));
-        }
+        other => Err(mlua::Error::runtime(format!(
+            "number/string expected, got {}",
+            other.type_name()
+        ))),
     }
 }
 
@@ -959,7 +957,7 @@ fn l_widthindex(
         width -= ch_width;
     }
 
-    return index.into_lua_multi(lua);
+    index.into_lua_multi(lua)
 }
 
 /// Finds the byte position where truncation should occur to fit within a display width limit
@@ -1185,8 +1183,8 @@ fn l_grapheme_indices(
         return Err(mlua::Error::runtime("bad argument: position out of range"));
     }
 
-    let start = (i - 1) as usize;
-    let end = j as usize;
+    let start = i - 1;
+    let end = j;
 
     if !s.is_char_boundary(start) {
         return Err(mlua::Error::runtime("invalid UTF-8 code"));

@@ -573,7 +573,7 @@ impl MatchesClass for CharacterSet {
         let found = self.elements.iter().any(|el| match el {
             SetElement::Literal(c) => *c == ch,
             SetElement::Class(class) => class.matches(ch),
-            SetElement::Range(lo, hi) => *lo <= ch && ch <= *hi,
+            SetElement::Range(lo, hi) => (*lo..=*hi).contains(&ch),
         });
         found != self.complement
     }
