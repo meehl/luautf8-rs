@@ -482,10 +482,7 @@ impl<'p> Matcher<'p> {
         }
 
         let mut balance = 1;
-        let mut char_pos = pos.char_index + 1;
-
-        #[allow(clippy::explicit_counter_loop)]
-        for (i, ch) in chars {
+        for (char_pos, (i, ch)) in chars.enumerate() {
             if ch == open {
                 balance += 1;
             } else if ch == close {
@@ -493,12 +490,10 @@ impl<'p> Matcher<'p> {
                 if balance == 0 {
                     return Some(Position {
                         byte_index: pos.byte_index + i + ch.len_utf8(),
-                        char_index: char_pos + 1,
+                        char_index: pos.char_index + 1 + char_pos + 1,
                     });
                 }
             }
-
-            char_pos += 1;
         }
 
         None
