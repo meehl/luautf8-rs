@@ -78,9 +78,13 @@ impl<'s> Match<'s> {
         self.captures.iter().map(|c| c.value(self.input))
     }
 
-    /// Returns number of captures.
-    pub fn capture_count(&self) -> usize {
-        self.captures.len()
+    /// Returns iterator over all captures, or the whole match if there are none.
+    pub fn values(&self) -> impl Iterator<Item = CaptureValue<'s>> {
+        let whole = self
+            .captures
+            .is_empty()
+            .then(|| CaptureValue::Text(self.as_str()));
+        whole.into_iter().chain(self.captures())
     }
 }
 

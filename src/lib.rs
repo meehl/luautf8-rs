@@ -98,6 +98,13 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
     Ok(exports)
 }
 
+fn capture_value_to_lua(lua: &Lua, v: CaptureValue<'_>) -> Value {
+    match v {
+        CaptureValue::Text(t) => Value::String(lua.create_string(t).unwrap()),
+        CaptureValue::Position(p) => Value::Integer((p + 1) as _),
+    }
+}
+
 /// Resolves an index relative to a sequence of length `len`.
 ///
 /// Positive indices are returned unchanged. Negative indices count backward from the end, with
@@ -317,19 +324,15 @@ fn l_find(
     // TODO: plain
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
     match p.find(&s) {
-        Some(m) if m.capture_count() > 0 => {
-            let captures = m
-                .captures()
-                .map(|c| match c {
-                    CaptureValue::Text(text) => text.into_lua(lua),
-                    CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
-                })
-                .collect::<LuaResult<Vec<_>>>()?;
-            (m.start() + 1, m.end(), MultiValue::from_vec(captures)).into_lua_multi(lua)
-        }
         Some(m) => {
-            // no captures so just return the entire match
-            (m.start() + 1, m.end(), m.as_str().to_string()).into_lua_multi(lua)
+            let pos = vec![
+                Value::Integer((m.start() + 1) as _),
+                Value::Integer(m.end() as _),
+            ];
+            Ok(MultiValue::from_iter(
+                pos.into_iter()
+                    .chain(m.values().map(|c| capture_value_to_lua(lua, c))),
+            ))
         }
         None => (mlua::Value::Nil,).into_lua_multi(lua),
     }
@@ -349,17 +352,9 @@ fn l_gmatch(lua: &Lua, (s, pattern): (LuaString, LuaString)) -> LuaResult<Functi
     let mut matches = p.into_find_all(s);
 
     lua.create_function_mut(move |lua, ()| match matches.next() {
-        Some(m) if m.capture_count() > 0 => {
-            let captures = m
-                .captures()
-                .map(|c| match c {
-                    CaptureValue::Text(text) => text.into_lua(lua),
-                    CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
-                })
-                .collect::<LuaResult<Vec<_>>>()?;
-            Ok(MultiValue::from_vec(captures))
-        }
-        Some(m) => (m.as_str().to_string(),).into_lua_multi(lua),
+        Some(m) => Ok(MultiValue::from_iter(
+            m.values().map(|c| capture_value_to_lua(lua, c)),
+        )),
         None => (mlua::Value::Nil,).into_lua_multi(lua),
     })
 }
@@ -407,16 +402,11 @@ fn l_gsub(
         LuaReplacement::String(replacement_string) => Ok(Some(replacement_string.apply(m))),
         LuaReplacement::Table(table) => {
             // use first capture as key, or whole match if no captures
-            let key = m
-                .capture(0)
-                .map_or_else(
-                    || m.as_str().into_lua(lua),
-                    |c| match c {
-                        CaptureValue::Text(text) => text.into_lua(lua),
-                        CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
-                    },
-                )
-                .unwrap();
+            let key = m.capture(0).map_or_else(
+                || Value::String(lua.create_string(m.as_str()).unwrap()),
+                |c| capture_value_to_lua(lua, c),
+            );
+
             let value = table.get(key)?;
             match value {
                 Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
@@ -428,24 +418,9 @@ fn l_gsub(
             }
         }
         LuaReplacement::Function(function) => {
-            // use all captures as function arguments, or whole match if no captures
-            let args: Variadic<LuaString> = if m.capture_count() == 0 {
-                Variadic::from(vec![lua.create_string(m.as_str())?])
-            } else {
-                Variadic::from(
-                    m.captures()
-                        .map(|c| match c {
-                            CaptureValue::Text(text) => lua.create_string(text),
-                            CaptureValue::Position(char_pos) => {
-                                lua.create_string(format!("{}", char_pos + 1))
-                            }
-                        })
-                        .collect::<LuaResult<Vec<_>>>()?,
-                )
-            };
+            let args = Variadic::from_iter(m.values().map(|c| capture_value_to_lua(lua, c)));
 
             let value = function.call(args)?;
-
             match value {
                 Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
                 Value::Nil | Value::Boolean(false) => Ok(None),
@@ -515,20 +490,9 @@ fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> Lua
     // TODO: init (start position)
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
     match p.find(&s) {
-        Some(m) if m.capture_count() > 0 => {
-            let captures = m
-                .captures()
-                .map(|c| match c {
-                    CaptureValue::Text(text) => text.into_lua(lua),
-                    CaptureValue::Position(char_pos) => (char_pos + 1).into_lua(lua),
-                })
-                .collect::<LuaResult<Vec<_>>>()?;
-            Ok(MultiValue::from_vec(captures))
-        }
-        Some(m) => {
-            // no captures so just return the entire match
-            (m.as_str().to_string(),).into_lua_multi(lua)
-        }
+        Some(m) => Ok(MultiValue::from_iter(
+            m.values().map(|c| capture_value_to_lua(lua, c)),
+        )),
         None => (mlua::Value::Nil,).into_lua_multi(lua),
     }
 }
