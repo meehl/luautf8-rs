@@ -96,7 +96,7 @@ impl<'s> Parser<'s> {
     /// Consumes `self` and parses `self.input` into a `Pattern`.
     fn parse(mut self) -> Result<Pattern, PatternError> {
         let anchored_start = self.consume_if('^');
-        let sequence = self.parse_sequence(None)?;
+        let sequence = self.parse_sequence()?;
         let anchored_end = self.consume_if('$');
 
         if !self.open_capture_stack.is_empty() {
@@ -115,26 +115,18 @@ impl<'s> Parser<'s> {
         })
     }
 
-    fn parse_sequence(&mut self, terminator: Option<char>) -> Result<Vec<Item>, PatternError> {
+    fn parse_sequence(&mut self) -> Result<Vec<Item>, PatternError> {
         let mut items = Vec::new();
 
         while !self.at_end() {
             let current = self.peek().expect("not at end");
 
-            if Some(current) == terminator {
-                break;
-            }
-
             // let `parse` handle trailing '$'
-            if terminator.is_none() && current == '$' && self.remaining() == "$" {
+            if current == '$' && self.remaining() == "$" {
                 break;
             }
 
             items.push(self.parse_item()?);
-        }
-
-        if terminator.is_some() && self.at_end() {
-            return Err(self.error("unterminated sequence"));
         }
 
         Ok(items)
