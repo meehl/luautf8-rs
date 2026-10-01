@@ -270,17 +270,17 @@ impl<'p> Matcher<'p> {
         mut pos: Position,
         mut item_index: usize,
     ) -> Option<Position> {
-        loop {
-            let pattern_sequence = self.pattern.sequence();
-            if item_index >= pattern_sequence.len() {
-                return if self.pattern.anchored_end() {
-                    (pos.byte_index == ctx.input.len()).then_some(pos)
-                } else {
-                    Some(pos)
-                };
-            }
+        let pattern_sequence = self.pattern.sequence();
 
+        while item_index < pattern_sequence.len() {
             match &pattern_sequence[item_index] {
+                Item::AnchorEnd => {
+                    if pos.byte_index != ctx.input.len() {
+                        return None;
+                    }
+
+                    item_index += 1;
+                }
                 Item::Class { class, modifier } => {
                     let does_match = Self::match_class(ctx, pos, class);
 
@@ -384,6 +384,8 @@ impl<'p> Matcher<'p> {
                 }
             }
         }
+
+        Some(pos)
     }
 
     fn match_class(ctx: &MatchContext, pos: Position, class: &CharacterClass) -> bool {

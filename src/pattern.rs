@@ -16,8 +16,6 @@ pub struct Pattern {
     sequence: Vec<Item>,
     /// `^` at start of pattern.
     anchored_start: bool,
-    /// `$` at end of pattern.
-    anchored_end: bool,
     /// Total number of captures in this pattern.
     capture_count: usize,
 }
@@ -63,9 +61,6 @@ impl Pattern {
     pub fn anchored_start(&self) -> bool {
         self.anchored_start
     }
-    pub fn anchored_end(&self) -> bool {
-        self.anchored_end
-    }
     pub fn capture_count(&self) -> usize {
         self.capture_count
     }
@@ -97,7 +92,6 @@ impl<'s> Parser<'s> {
     fn parse(mut self) -> Result<Pattern, PatternError> {
         let anchored_start = self.consume_if('^');
         let sequence = self.parse_sequence()?;
-        let anchored_end = self.consume_if('$');
 
         if !self.open_capture_stack.is_empty() {
             return Err(self.error("unmatched capture open"));
@@ -110,7 +104,6 @@ impl<'s> Parser<'s> {
         Ok(Pattern {
             sequence,
             anchored_start,
-            anchored_end,
             capture_count: self.next_capture,
         })
     }
@@ -119,13 +112,6 @@ impl<'s> Parser<'s> {
         let mut items = Vec::new();
 
         while !self.at_end() {
-            let current = self.peek().expect("not at end");
-
-            // let `parse` handle trailing '$'
-            if current == '$' && self.remaining() == "$" {
-                break;
-            }
-
             items.push(self.parse_item()?);
         }
 
@@ -167,6 +153,17 @@ impl<'s> Parser<'s> {
                     class: CharacterClass::Any,
                     modifier,
                 })
+            }
+            Some('$') => {
+                if self.at_end() {
+                    Ok(Item::AnchorEnd)
+                } else {
+                    let modifier = self.parse_modifier();
+                    Ok(Item::Class {
+                        class: CharacterClass::Literal('$'),
+                        modifier,
+                    })
+                }
             }
             Some(ch) => {
                 let modifier = self.parse_modifier();
@@ -331,10 +328,6 @@ impl<'s> Parser<'s> {
         self.pos == self.input.len()
     }
 
-    fn remaining(&self) -> &str {
-        &self.input[self.pos..]
-    }
-
     /// Returns `true` and consumes the next `char` if it matches `ch`.
     fn consume_if(&mut self, expected: char) -> bool {
         if self.peek() == Some(expected) {
@@ -378,6 +371,8 @@ pub(crate) enum Item {
     CaptureClose(usize),
     /// Position capture, i.e. `()`
     PositionCapture(usize),
+    /// End anchor, i.e. `$` at end
+    AnchorEnd,
 }
 
 /// A Lua character class.
@@ -565,7 +560,6 @@ mod tests {
 
         assert_eq!(pattern.sequence, vec![]);
         assert!(!pattern.anchored_start);
-        assert!(!pattern.anchored_end);
         assert_eq!(pattern.capture_count, 0);
     }
 
@@ -605,7 +599,6 @@ mod tests {
         let pattern = parse("^abc");
 
         assert!(pattern.anchored_start);
-        assert!(!pattern.anchored_end);
         assert_eq!(
             pattern.sequence,
             vec![literal('a'), literal('b'), literal('c')]
@@ -617,10 +610,9 @@ mod tests {
         let pattern = parse("abc$");
 
         assert!(!pattern.anchored_start);
-        assert!(pattern.anchored_end);
         assert_eq!(
             pattern.sequence,
-            vec![literal('a'), literal('b'), literal('c')]
+            vec![literal('a'), literal('b'), literal('c'), Item::AnchorEnd]
         );
     }
 
@@ -629,10 +621,9 @@ mod tests {
         let pattern = parse("^abc$");
 
         assert!(pattern.anchored_start);
-        assert!(pattern.anchored_end);
         assert_eq!(
             pattern.sequence,
-            vec![literal('a'), literal('b'), literal('c')]
+            vec![literal('a'), literal('b'), literal('c'), Item::AnchorEnd]
         );
     }
 
@@ -651,7 +642,6 @@ mod tests {
     fn parses_end_anchor_in_middle_as_literal() {
         let pattern = parse("a$b");
 
-        assert!(!pattern.anchored_end);
         assert_eq!(
             pattern.sequence,
             vec![literal('a'), literal('$'), literal('b')]
@@ -670,8 +660,7 @@ mod tests {
     fn parses_end_anchor_alone() {
         let pattern = parse("$");
 
-        assert!(pattern.anchored_end);
-        assert!(pattern.sequence.is_empty());
+        assert_eq!(pattern.sequence, vec![Item::AnchorEnd]);
     }
 
     #[test]
@@ -1396,7 +1385,6 @@ mod tests {
         let pattern = parse("^%a[%w_]*$");
 
         assert!(pattern.anchored_start);
-        assert!(pattern.anchored_end);
         assert_eq!(pattern.capture_count, 0);
 
         assert_eq!(
@@ -1416,6 +1404,7 @@ mod tests {
                     }),
                     modifier: Some(Modifier::ZeroOrMoreGreedy),
                 },
+                Item::AnchorEnd
             ]
         );
     }
@@ -1425,10 +1414,8 @@ mod tests {
         let pattern = parse("^(%a+)%s*(%d+)%s*=%s*(%b())$");
 
         assert!(pattern.anchored_start);
-        assert!(pattern.anchored_end);
         assert_eq!(pattern.capture_count, 3);
-
-        assert_eq!(pattern.sequence.len(), 13);
+        assert_eq!(pattern.sequence.len(), 14);
     }
 
     #[test]
