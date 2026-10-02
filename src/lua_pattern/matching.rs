@@ -1,21 +1,32 @@
-use crate::pattern::{
+use crate::lua_pattern::pattern::{
     CharacterClass, CharacterSet, Item, Modifier, Pattern, PredefinedClass, PredefinedClassKind,
     SetElement,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Position {
-    byte_index: usize,
-    char_index: usize,
+/// Searches the input for the first match starting at the given character position.
+pub fn find<'s>(input: &'s str, pattern: &Pattern, start: Option<usize>) -> Option<Match<'s>> {
+    let start = match start {
+        Some(char_index) => position_at_char(input, char_index)?,
+        None => Position::default(),
+    };
+
+    find_from_position(input, pattern, start)
 }
 
-/// A successful match.
-#[derive(Debug)]
-pub struct Match<'s> {
-    input: &'s str,
-    start: Position,
-    end: Position,
-    captures: Vec<Capture>,
+/// Returns an iterator over all matches.
+pub fn find_all<'s, 'p>(input: &'s str, pattern: &'p Pattern) -> Matches<'s, 'p> {
+    Matches::new(input, pattern)
+}
+
+/// Returns an iterator over all matches that owns the input string and pattern.
+pub fn gmatch(input: String, pattern: Pattern) -> GMatches {
+    GMatches::new(input, pattern)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Position {
+    byte_index: usize,
+    char_index: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -40,6 +51,15 @@ pub enum CaptureValue<'s> {
     Text(&'s str),
     /// 0-based character index
     Position(usize),
+}
+
+/// A successful match.
+#[derive(Debug)]
+pub struct Match<'s> {
+    input: &'s str,
+    start: Position,
+    end: Position,
+    captures: Vec<Capture>,
 }
 
 impl<'s> Match<'s> {
@@ -90,25 +110,25 @@ impl<'s> Match<'s> {
 
 /// Iterator over matches.
 #[derive(Debug)]
-pub struct Matches<'p, 's> {
-    matcher: Matcher<'p>,
+pub struct Matches<'s, 'p> {
     input: &'s str,
+    pattern: &'p Pattern,
     next_pos: Position,
     done: bool,
 }
 
-impl<'p, 's> Matches<'p, 's> {
-    pub fn new(pattern: &'p Pattern, input: &'s str) -> Self {
+impl<'s, 'p> Matches<'s, 'p> {
+    pub fn new(input: &'s str, pattern: &'p Pattern) -> Self {
         Self {
-            matcher: Matcher::new(pattern),
             input,
+            pattern,
             next_pos: Position::default(),
             done: false,
         }
     }
 }
 
-impl<'p, 's> Iterator for Matches<'p, 's> {
+impl<'s, 'p> Iterator for Matches<'s, 'p> {
     type Item = Match<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -116,37 +136,36 @@ impl<'p, 's> Iterator for Matches<'p, 's> {
             return None;
         }
 
-        let m = self.matcher.find_from_position(self.input, self.next_pos)?;
+        let matched = find_from_position(self.input, self.pattern, self.next_pos)?;
 
-        if m.end.char_index > self.next_pos.char_index {
-            self.next_pos = m.end;
-        } else if m.end.byte_index < self.input.len() {
-            // zero-length match.
-            // move past one character.
-            self.next_pos = advance(self.input, m.end);
+        if matched.start.byte_index == matched.end.byte_index {
+            if matched.end.byte_index == self.input.len() {
+                self.done = true;
+            } else {
+                // empty matches must advance by at least one character
+                self.next_pos = advance(self.input, matched.end);
+            }
         } else {
-            // zero-length match at EOF.
-            // return it but don't allow another search from the same position.
-            self.done = true;
+            self.next_pos = matched.end;
         }
 
-        Some(m)
+        Some(matched)
     }
 }
 
-/// Owned version of `Matches` that takes ownership of the pattern and haystack.
-pub struct OwnedMatches {
-    pattern: Pattern,
+/// Iterator over matches that owns the input string and pattern.
+pub struct GMatches {
     input: String,
+    pattern: Pattern,
     next_pos: Position,
     done: bool,
 }
 
-impl OwnedMatches {
-    pub fn new(pattern: Pattern, input: String) -> Self {
+impl GMatches {
+    pub fn new(input: String, pattern: Pattern) -> Self {
         Self {
-            pattern,
             input,
+            pattern,
             next_pos: Position::default(),
             done: false,
         }
@@ -157,22 +176,20 @@ impl OwnedMatches {
             return None;
         }
 
-        let matcher = Matcher::new(&self.pattern);
-        let m = matcher.find_from_position(&self.input, self.next_pos)?;
+        let matched = find_from_position(&self.input, &self.pattern, self.next_pos)?;
 
-        if m.end.char_index > self.next_pos.char_index {
-            self.next_pos = m.end;
-        } else if m.end.byte_index < self.input.len() {
-            // zero-length match.
-            // move past one character.
-            self.next_pos = advance(&self.input, m.end);
+        if matched.start.byte_index == matched.end.byte_index {
+            if matched.end.byte_index == self.input.len() {
+                self.done = true;
+            } else {
+                // empty matches must advance by at least one character
+                self.next_pos = advance(&self.input, matched.end);
+            }
         } else {
-            // zero-length match at EOF.
-            // return it but don't allow another search from the same position.
-            self.done = true;
+            self.next_pos = matched.end;
         }
 
-        Some(m)
+        Some(matched)
     }
 }
 
@@ -186,326 +203,311 @@ enum CaptureSlot {
 }
 
 #[derive(Debug)]
-struct MatchContext<'s> {
+struct MatchContext<'s, 'p> {
     input: &'s str,
+    pattern: &'p Pattern,
     captures: Vec<Option<CaptureSlot>>,
 }
 
-#[derive(Debug)]
-pub struct Matcher<'p> {
-    pattern: &'p Pattern,
+/// Searches for match starting at given position.
+fn find_from_position<'s>(input: &'s str, pattern: &Pattern, start: Position) -> Option<Match<'s>> {
+    let mut ctx = MatchContext {
+        input,
+        pattern,
+        captures: vec![None; pattern.capture_count()],
+    };
+
+    let (start, end) = find_pattern(&mut ctx, start)?;
+
+    let captures = ctx
+        .captures
+        .into_iter()
+        .map(|slot| {
+            let slot = slot.expect("successful match doesn't leave capture slot unset");
+            match slot {
+                CaptureSlot::Text { start, end } => Capture::Text {
+                    start,
+                    end: end.unwrap_or(start),
+                },
+                CaptureSlot::Position(position) => Capture::Position(position),
+            }
+        })
+        .collect();
+
+    Some(Match {
+        input,
+        start,
+        end,
+        captures,
+    })
 }
 
-impl<'p> Matcher<'p> {
-    pub fn new(pattern: &'p Pattern) -> Self {
-        Self { pattern }
-    }
+/// Slides the pattern over the input and tries to find a match.
+/// Returns the start and end positions of the match if successful.
+fn find_pattern(ctx: &mut MatchContext, start: Position) -> Option<(Position, Position)> {
+    let anchored = ctx.pattern.has_start_anchor();
+    let pattern_index = if anchored { 1 } else { 0 };
 
-    /// Searches the entire input for the first match.
-    pub fn find<'s>(&self, input: &'s str) -> Option<Match<'s>> {
-        self.find_from(input, 0)
-    }
+    let mut pos = start;
 
-    /// Searches the input for the first match starting at given character position.
-    pub fn find_from<'s>(&self, input: &'s str, start: usize) -> Option<Match<'s>> {
-        let position = position_at_char(input, start)?;
-        self.find_from_position(input, position)
-    }
+    loop {
+        // each attempted starting position needs a clean capture state
+        ctx.captures.fill(None);
 
-    fn find_from_position<'s>(&self, input: &'s str, start: Position) -> Option<Match<'s>> {
-        // only try the start if anchored with `^`
-        if self.pattern.anchored_start() {
-            return self.match_at(input, start);
+        if let Some(end) = do_match(ctx, pos, pattern_index) {
+            return Some((pos, end));
         }
 
-        // otherwise, "slide" the pattern over the input and try to find a match
-        let mut pos = start;
-        loop {
-            if let Some(m) = self.match_at(input, pos) {
-                return Some(m);
-            }
-            if pos.byte_index >= input.len() {
-                return None;
-            }
-            pos = advance(input, pos);
+        // an anchored pattern gets exactly one attempt at the given start position.
+        if anchored {
+            return None;
         }
+
+        if pos.byte_index == ctx.input.len() {
+            return None;
+        }
+
+        pos = advance(ctx.input, pos);
     }
+}
 
-    /// Attempts to match the pattern to the input at given position.
-    fn match_at<'s>(&self, input: &'s str, position: Position) -> Option<Match<'s>> {
-        let mut ctx = MatchContext {
-            input,
-            captures: vec![None; self.pattern.capture_count()],
-        };
+/// Tries to match pattern at given position and pattern index.
+/// Returns end position on successful match or `None` on no match.
+fn do_match(
+    ctx: &mut MatchContext,
+    mut pos: Position,
+    mut pattern_index: usize,
+) -> Option<Position> {
+    let pattern_sequence = ctx.pattern.sequence();
 
-        let end = self.do_match(&mut ctx, position, 0)?;
-
-        let captures = ctx
-            .captures
-            .into_iter()
-            .map(|slot| {
-                let slot = slot.expect("not unset");
-                match slot {
-                    CaptureSlot::Text { start, end } => {
-                        let end = end.unwrap_or(start);
-                        Capture::Text { start, end }
-                    }
-                    CaptureSlot::Position(position) => Capture::Position(position),
+    while pattern_index < pattern_sequence.len() {
+        match &pattern_sequence[pattern_index] {
+            Item::AnchorStart => {
+                unreachable!("caller skips this by setting pattern_index to 1")
+            }
+            Item::AnchorEnd => {
+                if pos.byte_index != ctx.input.len() {
+                    return None;
                 }
-            })
-            .collect();
 
-        Some(Match {
-            input,
-            start: position,
-            end,
-            captures,
-        })
-    }
+                pattern_index += 1;
+            }
+            Item::Class { class, modifier } => {
+                let does_match = match_class(ctx, pos, class);
 
-    // Recursive match, similar to Lua's `match` in `lstrlib.c`.
-    fn do_match(
-        &self,
-        ctx: &mut MatchContext,
-        mut pos: Position,
-        mut item_index: usize,
-    ) -> Option<Position> {
-        let pattern_sequence = self.pattern.sequence();
-
-        while item_index < pattern_sequence.len() {
-            match &pattern_sequence[item_index] {
-                Item::AnchorEnd => {
-                    if pos.byte_index != ctx.input.len() {
-                        return None;
-                    }
-
-                    item_index += 1;
-                }
-                Item::Class { class, modifier } => {
-                    let does_match = Self::match_class(ctx, pos, class);
-
-                    if !does_match {
-                        match modifier {
-                            Some(
-                                Modifier::ZeroOrMoreGreedy
-                                | Modifier::ZeroOrMoreLazy
-                                | Modifier::ZeroOrOne,
-                            ) => {
-                                // modifier makes class optional, so just continue
-                                item_index += 1;
-                                continue;
-                            }
-                            None | Some(Modifier::OneOrMore) => {
-                                // class not optional, didn't match so return
-                                return None;
-                            }
-                        }
-                    }
-
-                    // we have a match! proceed according to modifier
+                if !does_match {
                     match modifier {
-                        None => {
-                            pos = advance(ctx.input, pos);
-                            item_index += 1;
+                        Some(
+                            Modifier::ZeroOrMoreGreedy
+                            | Modifier::ZeroOrMoreLazy
+                            | Modifier::ZeroOrOne,
+                        ) => {
+                            // modifier makes class optional, so just continue
+                            pattern_index += 1;
+                            continue;
                         }
-                        Some(Modifier::ZeroOrMoreGreedy) => {
-                            return self.max_expand(ctx, pos, item_index, class);
-                        }
-                        Some(Modifier::ZeroOrMoreLazy) => {
-                            return self.min_expand(ctx, pos, item_index, class);
-                        }
-                        Some(Modifier::OneOrMore) => {
-                            let next_pos = advance(ctx.input, pos);
-                            return self.max_expand(ctx, next_pos, item_index, class);
-                        }
-                        Some(Modifier::ZeroOrOne) => {
-                            let next_pos = advance(ctx.input, pos);
-                            // check if rest of pattern matches if this is counted as "one"
-                            if let Some(end) = self.do_match(ctx, next_pos, item_index + 1) {
-                                return Some(end);
-                            }
-                            // otherwise fallback to zero occurrences
-                            item_index += 1;
+                        None | Some(Modifier::OneOrMore) => {
+                            // class not optional, didn't match so return
+                            return None;
                         }
                     }
                 }
-                Item::CaptureRef(n) => {
-                    pos = Self::match_capture_ref(ctx, pos, *n)?;
-                    item_index += 1;
-                }
-                Item::Balanced { open, close } => {
-                    pos = self.match_balanced(ctx, pos, *open, *close)?;
-                    item_index += 1;
-                }
-                Item::Frontier(character_set) => {
-                    if !Self::match_frontier(ctx, pos, character_set) {
-                        return None;
-                    }
-                    item_index += 1;
-                }
-                Item::CaptureOpen(capture_index) => {
-                    let saved = ctx.captures[*capture_index];
-                    ctx.captures[*capture_index] = Some(CaptureSlot::Text {
-                        start: pos,
-                        end: None,
-                    });
-                    let result = self.do_match(ctx, pos, item_index + 1);
-                    if result.is_none() {
-                        ctx.captures[*capture_index] = saved;
-                    }
-                    return result;
-                }
-                Item::CaptureClose(capture_index) => {
-                    let saved = ctx.captures[*capture_index];
 
-                    match &mut ctx.captures[*capture_index] {
-                        Some(CaptureSlot::Text { end, .. }) => {
-                            *end = Some(pos);
+                // we have a match! proceed according to modifier
+                match modifier {
+                    None => {
+                        pos = advance(ctx.input, pos);
+                        pattern_index += 1;
+                    }
+                    Some(Modifier::ZeroOrMoreGreedy) => {
+                        return max_expand(ctx, pos, pattern_index, class);
+                    }
+                    Some(Modifier::ZeroOrMoreLazy) => {
+                        return min_expand(ctx, pos, pattern_index, class);
+                    }
+                    Some(Modifier::OneOrMore) => {
+                        let next_pos = advance(ctx.input, pos);
+                        return max_expand(ctx, next_pos, pattern_index, class);
+                    }
+                    Some(Modifier::ZeroOrOne) => {
+                        let next_pos = advance(ctx.input, pos);
+                        // check if rest of pattern matches if this is counted as "one"
+                        if let Some(end) = do_match(ctx, next_pos, pattern_index + 1) {
+                            return Some(end);
                         }
-                        _ => unreachable!("capture close without an open text capture"),
+                        // otherwise fallback to zero occurrences
+                        pattern_index += 1;
                     }
-
-                    let result = self.do_match(ctx, pos, item_index + 1);
-                    if result.is_none() {
-                        ctx.captures[*capture_index] = saved;
-                    }
-                    return result;
-                }
-                Item::PositionCapture(capture_index) => {
-                    let saved = ctx.captures[*capture_index];
-
-                    ctx.captures[*capture_index] = Some(CaptureSlot::Position(pos));
-
-                    let result = self.do_match(ctx, pos, item_index + 1);
-                    if result.is_none() {
-                        ctx.captures[*capture_index] = saved;
-                    }
-                    return result;
                 }
             }
+            Item::CaptureRef(n) => {
+                pos = match_capture_ref(ctx, pos, *n)?;
+                pattern_index += 1;
+            }
+            Item::Balanced { open, close } => {
+                pos = match_balanced(ctx, pos, *open, *close)?;
+                pattern_index += 1;
+            }
+            Item::Frontier(character_set) => {
+                if !match_frontier(ctx, pos, character_set) {
+                    return None;
+                }
+                pattern_index += 1;
+            }
+            Item::CaptureOpen(capture_index) => {
+                let saved = ctx.captures[*capture_index];
+                ctx.captures[*capture_index] = Some(CaptureSlot::Text {
+                    start: pos,
+                    end: None,
+                });
+                let result = do_match(ctx, pos, pattern_index + 1);
+                if result.is_none() {
+                    ctx.captures[*capture_index] = saved;
+                }
+                return result;
+            }
+            Item::CaptureClose(capture_index) => {
+                let saved = ctx.captures[*capture_index];
+
+                match &mut ctx.captures[*capture_index] {
+                    Some(CaptureSlot::Text { end, .. }) => {
+                        *end = Some(pos);
+                    }
+                    _ => unreachable!("capture close without an open text capture"),
+                }
+
+                let result = do_match(ctx, pos, pattern_index + 1);
+                if result.is_none() {
+                    ctx.captures[*capture_index] = saved;
+                }
+                return result;
+            }
+            Item::PositionCapture(capture_index) => {
+                let saved = ctx.captures[*capture_index];
+
+                ctx.captures[*capture_index] = Some(CaptureSlot::Position(pos));
+
+                let result = do_match(ctx, pos, pattern_index + 1);
+                if result.is_none() {
+                    ctx.captures[*capture_index] = saved;
+                }
+                return result;
+            }
         }
-
-        Some(pos)
     }
 
-    fn match_class(ctx: &MatchContext, pos: Position, class: &CharacterClass) -> bool {
-        ctx.input[pos.byte_index..]
-            .chars()
-            .next()
-            .is_some_and(|ch| class.matches(ch))
+    Some(pos)
+}
+
+fn match_class(ctx: &MatchContext, pos: Position, class: &CharacterClass) -> bool {
+    ctx.input[pos.byte_index..]
+        .chars()
+        .next()
+        .is_some_and(|ch| class.matches(ch))
+}
+
+/// Greedily matches as many repetitions of `class` as possible.
+fn max_expand(
+    ctx: &mut MatchContext,
+    start: Position,
+    item_index: usize,
+    class: &CharacterClass,
+) -> Option<Position> {
+    // consume as many repetitions as possible and keep track of their positions
+    let mut current_pos = start;
+    let mut candidate_positions = vec![current_pos];
+    while match_class(ctx, current_pos, class) {
+        current_pos = advance(ctx.input, current_pos);
+        candidate_positions.push(current_pos);
     }
 
-    /// Greedily matches as many repetitions of `class` as possible.
-    fn max_expand(
-        &self,
-        ctx: &mut MatchContext,
-        start: Position,
-        item_index: usize,
-        class: &CharacterClass,
-    ) -> Option<Position> {
-        // consume as many repetitions as possible and keep track of their positions
-        let mut current_pos = start;
-        let mut candidate_positions = vec![current_pos];
-        while Self::match_class(ctx, current_pos, class) {
+    // backtrack from longest match until we find a position where the rest of the pattern
+    // also matches
+    for &pos in candidate_positions.iter().rev() {
+        if let Some(end) = do_match(ctx, pos, item_index + 1) {
+            return Some(end);
+        }
+    }
+
+    None
+}
+
+/// Matches as few repetitions of `class` as possible.
+fn min_expand(
+    ctx: &mut MatchContext,
+    start: Position,
+    item_index: usize,
+    class: &CharacterClass,
+) -> Option<Position> {
+    // start at zero repetitions and increase until rest of the pattern also matches.
+    let mut current_pos = start;
+    loop {
+        if let Some(end) = do_match(ctx, current_pos, item_index + 1) {
+            return Some(end);
+        }
+        if match_class(ctx, current_pos, class) {
             current_pos = advance(ctx.input, current_pos);
-            candidate_positions.push(current_pos);
-        }
-
-        // backtrack from longest match until we find a position where the rest of the pattern
-        // also matches
-        for &pos in candidate_positions.iter().rev() {
-            if let Some(end) = self.do_match(ctx, pos, item_index + 1) {
-                return Some(end);
-            }
-        }
-
-        None
-    }
-
-    /// Matches as few repetitions of `class` as possible.
-    fn min_expand(
-        &self,
-        ctx: &mut MatchContext,
-        start: Position,
-        item_index: usize,
-        class: &CharacterClass,
-    ) -> Option<Position> {
-        // start at zero repetitions and increase until rest of the pattern also matches.
-        let mut current_pos = start;
-        loop {
-            if let Some(end) = self.do_match(ctx, current_pos, item_index + 1) {
-                return Some(end);
-            }
-            if Self::match_class(ctx, current_pos, class) {
-                current_pos = advance(ctx.input, current_pos);
-            } else {
-                return None;
-            }
-        }
-    }
-
-    fn match_capture_ref(ctx: &MatchContext, pos: Position, n: u8) -> Option<Position> {
-        let index = (n as usize).checked_sub(1)?;
-        let capture = ctx.captures.get(index)?.as_ref()?;
-
-        let CaptureSlot::Text {
-            start,
-            end: Some(end),
-        } = capture
-        else {
-            return None;
-        };
-
-        let captured = &ctx.input[start.byte_index..end.byte_index];
-
-        ctx.input[pos.byte_index..]
-            .starts_with(captured)
-            .then(|| Position {
-                byte_index: pos.byte_index + captured.len(),
-                char_index: pos.char_index + (end.char_index - start.char_index),
-            })
-    }
-
-    fn match_balanced(
-        &self,
-        ctx: &MatchContext,
-        pos: Position,
-        open: char,
-        close: char,
-    ) -> Option<Position> {
-        let mut chars = ctx.input[pos.byte_index..].char_indices();
-        let (_, first) = chars.next()?;
-
-        if first != open {
+        } else {
             return None;
         }
+    }
+}
 
-        let mut balance = 1;
-        for (char_pos, (i, ch)) in chars.enumerate() {
-            if ch == open {
-                balance += 1;
-            } else if ch == close {
-                balance -= 1;
-                if balance == 0 {
-                    return Some(Position {
-                        byte_index: pos.byte_index + i + ch.len_utf8(),
-                        char_index: pos.char_index + 1 + char_pos + 1,
-                    });
-                }
+fn match_capture_ref(ctx: &MatchContext, pos: Position, n: u8) -> Option<Position> {
+    let index = (n as usize).checked_sub(1)?;
+    let capture = ctx.captures.get(index)?.as_ref()?;
+
+    let CaptureSlot::Text {
+        start,
+        end: Some(end),
+    } = capture
+    else {
+        return None;
+    };
+
+    let captured = &ctx.input[start.byte_index..end.byte_index];
+
+    ctx.input[pos.byte_index..]
+        .starts_with(captured)
+        .then(|| Position {
+            byte_index: pos.byte_index + captured.len(),
+            char_index: pos.char_index + (end.char_index - start.char_index),
+        })
+}
+
+fn match_balanced(ctx: &MatchContext, pos: Position, open: char, close: char) -> Option<Position> {
+    let mut chars = ctx.input[pos.byte_index..].char_indices();
+    let (_, first) = chars.next()?;
+
+    if first != open {
+        return None;
+    }
+
+    let mut balance = 1;
+    for (char_pos, (i, ch)) in chars.enumerate() {
+        if ch == open {
+            balance += 1;
+        } else if ch == close {
+            balance -= 1;
+            if balance == 0 {
+                return Some(Position {
+                    byte_index: pos.byte_index + i + ch.len_utf8(),
+                    char_index: pos.char_index + 1 + char_pos + 1,
+                });
             }
         }
-
-        None
     }
 
-    fn match_frontier(ctx: &MatchContext, pos: Position, set: &CharacterSet) -> bool {
-        let previous = ctx.input[..pos.byte_index]
-            .chars()
-            .next_back()
-            .unwrap_or('\0');
-        let next = ctx.input[pos.byte_index..].chars().next().unwrap_or('\0');
-        !set.matches(previous) && set.matches(next)
-    }
+    None
+}
+
+fn match_frontier(ctx: &MatchContext, pos: Position, set: &CharacterSet) -> bool {
+    let previous = ctx.input[..pos.byte_index]
+        .chars()
+        .next_back()
+        .unwrap_or('\0');
+    let next = ctx.input[pos.byte_index..].chars().next().unwrap_or('\0');
+    !set.matches(previous) && set.matches(next)
 }
 
 fn advance(input: &str, pos: Position) -> Position {
@@ -593,13 +595,11 @@ mod tests {
     }
 
     fn find(p: &str, input: &str) -> Option<String> {
-        Matcher::new(&pattern(p))
-            .find(input)
-            .map(|m| m.as_str().to_owned())
+        super::find(input, &pattern(p), None).map(|m| m.as_str().to_owned())
     }
 
     fn find_with_captures(p: &str, input: &str) -> Option<(String, Vec<String>)> {
-        Matcher::new(&pattern(p)).find(input).map(|m| {
+        super::find(input, &pattern(p), None).map(|m| {
             (
                 m.as_str().to_owned(),
                 m.captures()
@@ -1153,7 +1153,7 @@ mod tests {
 
     #[test]
     fn frontier_does_not_consume_character() {
-        let result = Matcher::new(&pattern("%f[%a]hello")).find("hello").unwrap();
+        let result = super::find("hello", &pattern("%f[%a]hello"), None).unwrap();
 
         assert_eq!(result.as_str(), "hello");
         assert_eq!(result.start(), 0);
@@ -1216,8 +1216,7 @@ mod tests {
 
     #[test]
     fn matching_does_not_split_utf8() {
-        let input = "é";
-        let result = Matcher::new(&pattern(".")).find(input).unwrap();
+        let result = super::find("é", &pattern("."), None).unwrap();
 
         assert_eq!(result.as_str(), "é");
         assert_eq!(result.start(), 0);
@@ -1226,8 +1225,7 @@ mod tests {
 
     #[test]
     fn matching_four_byte_character() {
-        let input = "😀";
-        let result = Matcher::new(&pattern(".")).find(input).unwrap();
+        let result = super::find("😀", &pattern("."), None).unwrap();
 
         assert_eq!(result.as_str(), "😀");
         assert_eq!(result.start(), 0);
@@ -1259,7 +1257,7 @@ mod tests {
 
     #[test]
     fn unicode_capture_span_is_char_based() {
-        let result = Matcher::new(&pattern("(é)")).find("é").unwrap();
+        let result = super::find("é", &pattern("(é)"), None).unwrap();
 
         assert_eq!(result.start(), 0);
         assert_eq!(result.end(), 1);
@@ -1278,14 +1276,14 @@ mod tests {
 
     #[test]
     fn find_does_not_start_in_middle_of_utf8() {
-        let result = Matcher::new(&pattern(".")).find("éx").unwrap();
+        let result = super::find("éx", &pattern("."), None).unwrap();
 
         assert_eq!(result.start(), 0);
     }
 
     #[test]
-    fn find_returns_match_at_end_for_empty_pattern() {
-        let result = Matcher::new(&pattern("")).find("abc").unwrap();
+    fn find_returns_match_at_start_for_empty_pattern() {
+        let result = super::find("abc", &pattern(""), None).unwrap();
 
         assert_eq!(result.start(), 0);
         assert_eq!(result.end(), 0);
@@ -1293,8 +1291,7 @@ mod tests {
 
     #[test]
     fn match_boundaries_are_char_indices() {
-        let input = "hello 안녕 abc";
-        let result = Matcher::new(&pattern("안녕")).find(input).unwrap();
+        let result = super::find("hello 안녕 abc", &pattern("안녕"), None).unwrap();
 
         assert_eq!(result.as_str(), "안녕");
         assert_eq!(result.start(), 6);
@@ -1303,7 +1300,7 @@ mod tests {
 
     #[test]
     fn star_can_produce_empty_match() {
-        let result = Matcher::new(&pattern("a*")).find("bbb").unwrap();
+        let result = super::find("bbb", &pattern("a*"), None).unwrap();
 
         assert_eq!(result.as_str(), "");
         assert_eq!(result.start(), 0);
@@ -1312,14 +1309,14 @@ mod tests {
 
     #[test]
     fn optional_can_produce_empty_match() {
-        let result = Matcher::new(&pattern("a?")).find("bbb").unwrap();
+        let result = super::find("bbb", &pattern("a?"), None).unwrap();
 
         assert_eq!(result.as_str(), "");
     }
 
     #[test]
     fn frontier_is_zero_width() {
-        let result = Matcher::new(&pattern("%f[%a]")).find(" abc").unwrap();
+        let result = super::find(" abc", &pattern("%f[%a]"), None).unwrap();
 
         assert_eq!(result.as_str(), "");
         assert_eq!(result.start(), 1);
@@ -1328,7 +1325,7 @@ mod tests {
 
     #[test]
     fn empty_match_can_occur_at_eof() {
-        let result = Matcher::new(&pattern("$")).find("abc").unwrap();
+        let result = super::find("abc", &pattern("$"), None).unwrap();
 
         assert_eq!(result.as_str(), "");
         assert_eq!(result.start(), 3);
@@ -1393,7 +1390,7 @@ mod tests {
     #[test]
     fn empty_capture_matches_every_position() {
         let pattern = Pattern::parse("()").unwrap();
-        let matches = pattern.find_all("abc").collect::<Vec<_>>();
+        let matches = find_all("abc", &pattern).collect::<Vec<_>>();
         assert_eq!(matches[0].start(), 0);
         assert_eq!(matches[0].end(), 0);
         assert_eq!(matches[1].start(), 1);

@@ -1,50 +1,40 @@
-use crate::{
-    matching::{CaptureValue, Match},
+use crate::lua_pattern::{
+    matching::{CaptureValue, Match, find_all},
     pattern::Pattern,
 };
 
-pub struct Replacer<'p> {
-    pattern: &'p Pattern,
-}
+/// Iterates over matches and replaces them according to replace function.
+pub fn replace_with<F, E>(
+    input: &str,
+    pattern: &Pattern,
+    replacement: F,
+    limit: Option<usize>,
+) -> Result<(String, usize), E>
+where
+    F: Fn(&Match) -> Result<Option<String>, E>,
+{
+    let limit = limit.unwrap_or(usize::MAX);
 
-impl<'p> Replacer<'p> {
-    pub fn new(pattern: &'p Pattern) -> Self {
-        Self { pattern }
-    }
+    let mut output = String::new();
+    let mut last = 0;
+    let mut num_of_replacements = 0;
 
-    /// Iterates over matches and replaces them according to replace function.
-    pub fn replace_with<F, E>(
-        &self,
-        input: &str,
-        replacement: F,
-        limit: Option<usize>,
-    ) -> Result<(String, usize), E>
-    where
-        F: Fn(&Match) -> Result<Option<String>, E>,
-    {
-        let limit = limit.unwrap_or(usize::MAX);
+    for m in find_all(input, pattern).take(limit) {
+        // leave original between matches intact
+        output.push_str(&input[last..m.start_byte()]);
 
-        let mut output = String::new();
-        let mut last = 0;
-        let mut num_of_replacements = 0;
-
-        for m in self.pattern.find_all(input).take(limit) {
-            // leave original between matches intact
-            output.push_str(&input[last..m.start_byte()]);
-
-            match replacement(&m)? {
-                Some(replacement) => output.push_str(&replacement),
-                None => output.push_str(m.as_str()),
-            }
-
-            last = m.end_byte();
-            num_of_replacements += 1;
+        match replacement(&m)? {
+            Some(replacement) => output.push_str(&replacement),
+            None => output.push_str(m.as_str()),
         }
 
-        // leave original after final match intact
-        output.push_str(&input[last..]);
-        Ok((output, num_of_replacements))
+        last = m.end_byte();
+        num_of_replacements += 1;
     }
+
+    // leave original after final match intact
+    output.push_str(&input[last..]);
+    Ok((output, num_of_replacements))
 }
 
 /// Parsed replacement string.

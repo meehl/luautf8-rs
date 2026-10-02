@@ -9,9 +9,7 @@
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
 
-mod matching;
-mod pattern;
-mod replacement;
+mod lua_pattern;
 
 use std::{iter::Peekable, str::Chars};
 
@@ -27,10 +25,8 @@ use mlua::{
 use unicode_normalization::{UnicodeNormalization, is_nfc};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{
-    matching::{CaptureValue, Match},
-    pattern::Pattern,
-    replacement::ReplacementString,
+use crate::lua_pattern::{
+    CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch, replace_with,
 };
 
 // TODO: pattern depends on lua version
@@ -320,12 +316,13 @@ fn l_find(
     (s, pattern, _init, plain): (String, String, Option<i32>, Option<bool>),
 ) -> LuaResult<MultiValue> {
     // TODO: check if error messages are the same
-    // TODO: init
+    let start_char = 0; // calc from init
+
     if plain.unwrap_or(false) {
-        let start_offset = 0; // TODO: convert `init` to byte offset and assign it here
-        match s[start_offset..].find(&pattern) {
+        let start_byte = 0; // TODO: convert `init` to byte offset and assign it here
+        match s[start_byte..].find(&pattern) {
             Some(found) => {
-                let start_byte = start_offset + found;
+                let start_byte = start_byte + found;
                 let start_char = s[..start_byte].chars().count();
                 let end_char = start_char + pattern.chars().count();
                 Ok(MultiValue::from(vec![
@@ -337,7 +334,7 @@ fn l_find(
         }
     } else {
         let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
-        match p.find(&s) {
+        match find(&s, &p, Some(start_char)) {
             Some(m) => {
                 let pos = vec![
                     Value::Integer((m.start() + 1) as _),
@@ -362,9 +359,10 @@ fn l_gmatch(lua: &Lua, (s, pattern): (LuaString, LuaString)) -> LuaResult<Functi
     let pattern_str = pattern
         .to_str()
         .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-    let p = Pattern::parse(&pattern_str).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+    let p = Pattern::parse_gmatch(&pattern_str)
+        .map_err(|_| mlua::Error::runtime("malformed pattern"))?;
 
-    let mut matches = p.into_find_all(s);
+    let mut matches = gmatch(s, p);
 
     lua.create_function_mut(move |lua, ()| match matches.next() {
         Some(m) => Ok(MultiValue::from_iter(
@@ -380,6 +378,44 @@ enum LuaReplacement {
     Function(mlua::Function),
 }
 
+impl LuaReplacement {
+    fn apply(&self, lua: &Lua, m: &Match) -> LuaResult<Option<String>> {
+        match self {
+            Self::String(replacement_string) => Ok(Some(replacement_string.apply(m))),
+            Self::Table(table) => {
+                // use first capture as key, or whole match if no captures
+                let key = m.capture(0).map_or_else(
+                    || Value::String(lua.create_string(m.as_str()).unwrap()),
+                    |c| capture_value_to_lua(lua, c),
+                );
+
+                let value = table.get(key)?;
+                match value {
+                    Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+                    Value::Nil | Value::Boolean(false) => Ok(None),
+                    other => Err(mlua::Error::runtime(format!(
+                        "invalid replacement value (a {})",
+                        other.type_name()
+                    ))),
+                }
+            }
+            Self::Function(function) => {
+                let args = Variadic::from_iter(m.values().map(|c| capture_value_to_lua(lua, c)));
+
+                let value = function.call(args)?;
+                match value {
+                    Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+                    Value::Nil | Value::Boolean(false) => Ok(None),
+                    other => Err(mlua::Error::runtime(format!(
+                        "invalid replacement value (a {})",
+                        other.type_name()
+                    ))),
+                }
+            }
+        }
+    }
+}
+
 /// Replaces every occurrence of `pattern` in `s` with `repl`, returning the new string and the
 /// number of substitutions. A maximum of `n` (default: unlimited) replacements will be performed.
 fn l_gsub(
@@ -388,23 +424,25 @@ fn l_gsub(
 ) -> LuaResult<(String, usize)> {
     let pattern =
         Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
+
     let replacement = match repl {
-        Value::String(s) => LuaReplacement::String(
-            ReplacementString::parse(&s.to_str()?, pattern.capture_count() as u8).map_err(|e| {
-                match e {
-                    replacement::ReplacementError::InvalidReference => {
+        Value::String(repl_str) => LuaReplacement::String(
+            ReplacementString::parse(&repl_str.to_str()?, pattern.capture_count() as u8).map_err(
+                |e| match e {
+                    ReplacementError::InvalidReference => {
                         mlua::Error::runtime("invalid capture index")
                     }
-                    replacement::ReplacementError::InvalidEscape => {
+                    ReplacementError::InvalidEscape => {
                         mlua::Error::runtime("invalid use of '%' in replacement string")
                     }
-                }
-            })?,
+                },
+            )?,
         ),
         Value::Table(table) => LuaReplacement::Table(table),
         Value::Function(function) => LuaReplacement::Function(function),
         _ => return Err(mlua::Error::runtime("string/function/table expected")),
     };
+
     let limit = n.map(|n| {
         if n <= 0 {
             0
@@ -413,41 +451,7 @@ fn l_gsub(
         }
     });
 
-    let replace = |m: &Match| match &replacement {
-        LuaReplacement::String(replacement_string) => Ok(Some(replacement_string.apply(m))),
-        LuaReplacement::Table(table) => {
-            // use first capture as key, or whole match if no captures
-            let key = m.capture(0).map_or_else(
-                || Value::String(lua.create_string(m.as_str()).unwrap()),
-                |c| capture_value_to_lua(lua, c),
-            );
-
-            let value = table.get(key)?;
-            match value {
-                Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
-                Value::Nil | Value::Boolean(false) => Ok(None),
-                other => Err(mlua::Error::runtime(format!(
-                    "invalid replacement value (a {})",
-                    other.type_name()
-                ))),
-            }
-        }
-        LuaReplacement::Function(function) => {
-            let args = Variadic::from_iter(m.values().map(|c| capture_value_to_lua(lua, c)));
-
-            let value = function.call(args)?;
-            match value {
-                Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
-                Value::Nil | Value::Boolean(false) => Ok(None),
-                other => Err(mlua::Error::runtime(format!(
-                    "invalid replacement value (a {})",
-                    other.type_name()
-                ))),
-            }
-        }
-    };
-
-    pattern.replace(&s, replace, limit)
+    replace_with(&s, &pattern, |m: &Match| replacement.apply(lua, m), limit)
 }
 
 /// Returns the number of UTF-8 characters in s, or nil plus an error message if s is not a valid
@@ -502,9 +506,9 @@ fn l_len(
 /// Matches pattern in `s`, returning the captures (or the whole match).
 fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
     // TODO: use same error msgs?
-    // TODO: init (start position)
+    let start_char = 0; // TODO: init (start position)
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
-    match p.find(&s) {
+    match find(&s, &p, Some(start_char)) {
         Some(m) => Ok(MultiValue::from_iter(
             m.values().map(|c| capture_value_to_lua(lua, c)),
         )),

@@ -5,17 +5,11 @@
 
 use std::fmt;
 
-use crate::{
-    matching::{Match, Matcher, Matches, OwnedMatches},
-    replacement::Replacer,
-};
-
 /// A parsed Lua pattern.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Pattern {
+    /// Sequence of pattern items.
     sequence: Vec<Item>,
-    /// `^` at start of pattern.
-    anchored_start: bool,
     /// Total number of captures in this pattern.
     capture_count: usize,
 }
@@ -23,47 +17,32 @@ pub struct Pattern {
 impl Pattern {
     /// Parses pattern string into a reusable `Pattern`.
     pub fn parse(source: &str) -> Result<Self, PatternError> {
-        Parser::new(source).parse()
+        Parser::new(source, LeadingCaret::Anchor).parse()
     }
 
-    /// Finds the first match anywhere in the `input`.
-    pub fn find<'s>(&self, input: &'s str) -> Option<Match<'s>> {
-        Matcher::new(self).find(input)
-    }
-
-    /// Creates an iterator over all matches.
-    pub fn find_all<'p, 's>(&'p self, input: &'s str) -> Matches<'p, 's> {
-        Matches::new(self, input)
-    }
-
-    /// Owned version of `find_all`.
-    pub fn into_find_all(self, input: String) -> OwnedMatches {
-        OwnedMatches::new(self, input)
-    }
-
-    /// Replaces all matches using a `Replacement`. `limit` limits the number of replacements to
-    /// perform.
-    pub fn replace<F, E>(
-        &self,
-        input: &str,
-        replacement: F,
-        limit: Option<usize>,
-    ) -> Result<(String, usize), E>
-    where
-        F: Fn(&Match) -> Result<Option<String>, E>,
-    {
-        Replacer::new(self).replace_with(input, replacement, limit)
+    /// Parses pattern string into a reusable `Pattern` for `gmatch`.
+    pub fn parse_gmatch(source: &str) -> Result<Self, PatternError> {
+        Parser::new(source, LeadingCaret::Literal).parse()
     }
 
     pub fn sequence(&self) -> &[Item] {
         &self.sequence
     }
-    pub fn anchored_start(&self) -> bool {
-        self.anchored_start
-    }
+
     pub fn capture_count(&self) -> usize {
         self.capture_count
     }
+
+    pub fn has_start_anchor(&self) -> bool {
+        self.sequence.first() == Some(&Item::AnchorStart)
+    }
+}
+
+/// Whether to parse leading carets as an anchor or literal.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum LeadingCaret {
+    Anchor,
+    Literal,
 }
 
 /// Parses a Lua pattern into a `Pattern`.
@@ -76,21 +55,23 @@ struct Parser<'s> {
     next_capture: usize,
     /// Stack for keeping track of opened captures.
     open_capture_stack: Vec<usize>,
+    /// Whether to parse leading caret as literal
+    leading_caret: LeadingCaret,
 }
 
 impl<'s> Parser<'s> {
-    fn new(input: &'s str) -> Self {
+    fn new(input: &'s str, leading_caret: LeadingCaret) -> Self {
         Self {
             input,
             pos: 0,
             next_capture: 0,
             open_capture_stack: Vec::new(),
+            leading_caret,
         }
     }
 
     /// Consumes `self` and parses `self.input` into a `Pattern`.
     fn parse(mut self) -> Result<Pattern, PatternError> {
-        let anchored_start = self.consume_if('^');
         let sequence = self.parse_sequence()?;
 
         if !self.open_capture_stack.is_empty() {
@@ -103,13 +84,16 @@ impl<'s> Parser<'s> {
 
         Ok(Pattern {
             sequence,
-            anchored_start,
             capture_count: self.next_capture,
         })
     }
 
     fn parse_sequence(&mut self) -> Result<Vec<Item>, PatternError> {
         let mut items = Vec::new();
+
+        if self.consume_if('^') && matches!(self.leading_caret, LeadingCaret::Anchor) {
+            items.push(Item::AnchorStart);
+        }
 
         while !self.at_end() {
             items.push(self.parse_item()?);
@@ -353,7 +337,7 @@ impl<'s> Parser<'s> {
 
 /// Pattern item.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum Item {
+pub enum Item {
     /// Single character class with optinal repetition modifier.
     Class {
         class: CharacterClass,
@@ -361,7 +345,7 @@ pub(crate) enum Item {
     },
     /// Reference to a previous capture group, e.g. `%1`.
     CaptureRef(u8),
-    /// Balanced , e.g. `%b()`
+    /// Balanced , e.g. `%b()`.
     Balanced { open: char, close: char },
     /// Frontier Pattern, e.g. `%f[a-z]`.
     Frontier(CharacterSet),
@@ -369,16 +353,18 @@ pub(crate) enum Item {
     CaptureOpen(usize),
     /// Closing parenthesis of a capture.
     CaptureClose(usize),
-    /// Position capture, i.e. `()`
+    /// Position capture, i.e. `()`.
     PositionCapture(usize),
-    /// End anchor, i.e. `$` at end
+    /// Start anchor, i.e. `^` at start.
+    AnchorStart,
+    /// End anchor, i.e. `$` at end.
     AnchorEnd,
 }
 
 /// A Lua character class.
 /// Used to represent a set of characters.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum CharacterClass {
+pub enum CharacterClass {
     /// Literal Unicode scalar value.
     Literal(char),
     /// `.`: any Unicode scalar value.
@@ -390,9 +376,9 @@ pub(crate) enum CharacterClass {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) struct PredefinedClass {
-    pub(crate) kind: PredefinedClassKind,
-    pub(crate) complement: bool,
+pub struct PredefinedClass {
+    pub kind: PredefinedClassKind,
+    pub complement: bool,
 }
 
 impl PredefinedClass {
@@ -420,7 +406,7 @@ impl PredefinedClass {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum PredefinedClassKind {
+pub enum PredefinedClassKind {
     /// `%a`: letter (alphabetic).
     Letter,
     /// `%c`: control character.
@@ -447,14 +433,14 @@ pub(crate) enum PredefinedClassKind {
 
 /// A Lua character set.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) struct CharacterSet {
-    pub(crate) complement: bool,
-    pub(crate) elements: Vec<SetElement>,
+pub struct CharacterSet {
+    pub complement: bool,
+    pub elements: Vec<SetElement>,
 }
 
 /// A Lua character set element.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) enum SetElement {
+pub enum SetElement {
     /// A literal character
     Literal(char),
     /// predefined character class
@@ -465,7 +451,7 @@ pub(crate) enum SetElement {
 
 /// A Lua pattern modifier.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum Modifier {
+pub enum Modifier {
     /// `*`: zero or more. Matches longest possible sequence.
     ZeroOrMoreGreedy,
     /// `+`: one or more.
@@ -559,7 +545,6 @@ mod tests {
         let pattern = parse("");
 
         assert_eq!(pattern.sequence, vec![]);
-        assert!(!pattern.anchored_start);
         assert_eq!(pattern.capture_count, 0);
     }
 
@@ -598,10 +583,9 @@ mod tests {
     fn parses_start_anchor() {
         let pattern = parse("^abc");
 
-        assert!(pattern.anchored_start);
         assert_eq!(
             pattern.sequence,
-            vec![literal('a'), literal('b'), literal('c')]
+            vec![Item::AnchorStart, literal('a'), literal('b'), literal('c')]
         );
     }
 
@@ -609,7 +593,6 @@ mod tests {
     fn parses_end_anchor() {
         let pattern = parse("abc$");
 
-        assert!(!pattern.anchored_start);
         assert_eq!(
             pattern.sequence,
             vec![literal('a'), literal('b'), literal('c'), Item::AnchorEnd]
@@ -620,10 +603,15 @@ mod tests {
     fn parses_both_anchors() {
         let pattern = parse("^abc$");
 
-        assert!(pattern.anchored_start);
         assert_eq!(
             pattern.sequence,
-            vec![literal('a'), literal('b'), literal('c'), Item::AnchorEnd]
+            vec![
+                Item::AnchorStart,
+                literal('a'),
+                literal('b'),
+                literal('c'),
+                Item::AnchorEnd
+            ]
         );
     }
 
@@ -631,7 +619,6 @@ mod tests {
     fn parses_start_anchor_in_middle_as_literal() {
         let pattern = parse("a^b");
 
-        assert!(!pattern.anchored_start);
         assert_eq!(
             pattern.sequence,
             vec![literal('a'), literal('^'), literal('b')]
@@ -652,8 +639,7 @@ mod tests {
     fn parses_start_anchor_alone() {
         let pattern = parse("^");
 
-        assert!(pattern.anchored_start);
-        assert!(pattern.sequence.is_empty());
+        assert_eq!(pattern.sequence, vec![Item::AnchorStart,]);
     }
 
     #[test]
@@ -1384,12 +1370,12 @@ mod tests {
     fn parses_realistic_identifier_pattern() {
         let pattern = parse("^%a[%w_]*$");
 
-        assert!(pattern.anchored_start);
         assert_eq!(pattern.capture_count, 0);
 
         assert_eq!(
             pattern.sequence,
             vec![
+                Item::AnchorStart,
                 Item::Class {
                     class: CharacterClass::Predefined(predefined(PredefinedClassKind::Letter)),
                     modifier: None,
@@ -1413,9 +1399,8 @@ mod tests {
     fn parses_complex_pattern() {
         let pattern = parse("^(%a+)%s*(%d+)%s*=%s*(%b())$");
 
-        assert!(pattern.anchored_start);
         assert_eq!(pattern.capture_count, 3);
-        assert_eq!(pattern.sequence.len(), 14);
+        assert_eq!(pattern.sequence.len(), 15);
     }
 
     #[test]
