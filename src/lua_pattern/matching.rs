@@ -3,10 +3,10 @@ use crate::lua_pattern::pattern::{
     SetElement,
 };
 
-/// Searches the input for the first match starting at the given character position.
+/// Searches the input for the first match starting at the given byte position.
 pub fn find<'s>(input: &'s str, pattern: &Pattern, start: Option<usize>) -> Option<Match<'s>> {
     let start = match start {
-        Some(char_index) => position_at_char(input, char_index)?,
+        Some(byte_index) => position_at_byte(input, byte_index)?,
         None => Position::default(),
     };
 
@@ -520,10 +520,10 @@ fn advance(input: &str, pos: Position) -> Position {
         })
 }
 
-fn position_at_char(input: &str, char_index: usize) -> Option<Position> {
+fn position_at_byte(input: &str, byte_index: usize) -> Option<Position> {
     let mut pos = Position::default();
 
-    while pos.char_index < char_index {
+    while pos.byte_index < byte_index {
         if pos.byte_index == input.len() {
             return None;
         }

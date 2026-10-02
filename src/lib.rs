@@ -313,17 +313,18 @@ fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
 /// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
 fn l_find(
     lua: &Lua,
-    (s, pattern, _init, plain): (String, String, Option<i32>, Option<bool>),
+    (s, pattern, init, plain): (String, String, Option<i32>, Option<bool>),
 ) -> LuaResult<MultiValue> {
-    // TODO: check if error messages are the same
-    let start_char = 0; // calc from init
+    let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
+    let Some(start_byte) = char_pos(s.as_bytes(), init as isize) else {
+        return (mlua::Value::Nil,).into_lua_multi(lua);
+    };
 
     if plain.unwrap_or(false) {
-        let start_byte = 0; // TODO: convert `init` to byte offset and assign it here
         match s[start_byte..].find(&pattern) {
             Some(found) => {
-                let start_byte = start_byte + found;
-                let start_char = s[..start_byte].chars().count();
+                let found_start_byte = start_byte + found;
+                let start_char = s[..found_start_byte].chars().count();
                 let end_char = start_char + pattern.chars().count();
                 Ok(MultiValue::from(vec![
                     Value::Integer((start_char + 1) as _),
@@ -334,7 +335,7 @@ fn l_find(
         }
     } else {
         let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
-        match find(&s, &p, Some(start_char)) {
+        match find(&s, &p, Some(start_byte)) {
             Some(m) => {
                 let pos = vec![
                     Value::Integer((m.start() + 1) as _),
@@ -504,11 +505,14 @@ fn l_len(
 }
 
 /// Matches pattern in `s`, returning the captures (or the whole match).
-fn l_match(lua: &Lua, (s, pattern, _init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
-    // TODO: use same error msgs?
-    let start_char = 0; // TODO: init (start position)
+fn l_match(lua: &Lua, (s, pattern, init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
+    let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
+    let Some(start_byte) = char_pos(s.as_bytes(), init as isize) else {
+        return (mlua::Value::Nil,).into_lua_multi(lua);
+    };
+
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
-    match find(&s, &p, Some(start_char)) {
+    match find(&s, &p, Some(start_byte)) {
         Some(m) => Ok(MultiValue::from_iter(
             m.values().map(|c| capture_value_to_lua(lua, c)),
         )),
