@@ -1388,7 +1388,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_capture_matches_every_position() {
+    fn positional_capture_matches_every_position() {
         let pattern = Pattern::parse("()").unwrap();
         let matches = find_all("abc", &pattern).collect::<Vec<_>>();
         assert_eq!(matches[0].start(), 0);
@@ -1399,5 +1399,245 @@ mod tests {
         assert_eq!(matches[2].end(), 2);
         assert_eq!(matches[3].start(), 3);
         assert_eq!(matches[3].end(), 3);
+    }
+
+    #[test]
+    fn positional_capture_at_start() {
+        let pattern = Pattern::parse("()").unwrap();
+        let m = super::find("hello", &pattern, None).unwrap();
+
+        assert_eq!(m.as_str(), "");
+        assert_eq!(m.start(), 0);
+        assert_eq!(m.end(), 0);
+
+        assert_eq!(m.capture(0), Some(CaptureValue::Position(0)));
+        assert_eq!(
+            m.captures().collect::<Vec<_>>(),
+            vec![CaptureValue::Position(0)]
+        );
+    }
+
+    #[test]
+    fn positional_capture_between_ascii_characters() {
+        let pattern = Pattern::parse("a()bc").unwrap();
+        let m = super::find("abc", &pattern, None).unwrap();
+
+        assert_eq!(m.as_str(), "abc");
+        assert_eq!(m.start(), 0);
+        assert_eq!(m.end(), 3);
+
+        assert_eq!(m.capture(0), Some(CaptureValue::Position(1)));
+    }
+
+    #[test]
+    fn positional_capture_between_utf8() {
+        let pattern = Pattern::parse("안()녕하세요").unwrap();
+        let m = super::find("안녕하세요", &pattern, None).unwrap();
+
+        assert_eq!(m.as_str(), "안녕하세요");
+        assert_eq!(m.start(), 0);
+        assert_eq!(m.end(), 5);
+
+        assert_eq!(m.capture(0), Some(CaptureValue::Position(1)));
+        assert_ne!(m.capture(0), Some(CaptureValue::Position(3)));
+    }
+
+    #[test]
+    fn positional_capture_at_end() {
+        let input = "안녕하세요";
+        let pattern = Pattern::parse("안녕하세요()").unwrap();
+        let m = super::find(input, &pattern, None).unwrap();
+
+        assert_eq!(m.as_str(), input);
+        assert_eq!(m.start(), 0);
+        assert_eq!(m.end(), 5);
+        assert_eq!(m.start_byte(), 0);
+        assert_eq!(m.end_byte(), input.len());
+
+        assert_eq!(m.capture(0), Some(CaptureValue::Position(5)));
+    }
+
+    #[test]
+    fn multiple_positional_captures() {
+        let pattern = Pattern::parse("안()녕()하").unwrap();
+        let m = super::find("안녕하세요", &pattern, None).unwrap();
+
+        assert_eq!(
+            m.captures().collect::<Vec<_>>(),
+            vec![CaptureValue::Position(1), CaptureValue::Position(2),]
+        );
+    }
+
+    #[test]
+    fn mixed_capture_types() {
+        let pattern = Pattern::parse("(안)()녕").unwrap();
+        let m = super::find("안녕하세요", &pattern, None).unwrap();
+
+        assert_eq!(
+            m.captures().collect::<Vec<_>>(),
+            vec![CaptureValue::Text("안"), CaptureValue::Position(1),]
+        );
+    }
+
+    #[test]
+    fn find_all_returns_all_matches() {
+        let input = "one two one three";
+        let pattern = Pattern::parse("one").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].as_str(), "one");
+        assert_eq!(matches[1].as_str(), "one");
+
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 3);
+
+        assert_eq!(matches[1].start(), 8);
+        assert_eq!(matches[1].end(), 11);
+    }
+
+    #[test]
+    fn find_all_returns_adjacent_matches() {
+        let input = "aaaa";
+        let pattern = Pattern::parse("aa").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 2);
+
+        assert_eq!(matches[0].as_str(), "aa");
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 2);
+
+        assert_eq!(matches[1].as_str(), "aa");
+        assert_eq!(matches[1].start(), 2);
+        assert_eq!(matches[1].end(), 4);
+    }
+
+    #[test]
+    fn find_all_returns_no_matches() {
+        let input = "abcdef";
+        let pattern = Pattern::parse("xyz").unwrap();
+
+        assert_eq!(find_all(input, &pattern).count(), 0);
+    }
+
+    #[test]
+    fn find_all_handles_empty_match_at_start() {
+        let input = "abc";
+        let pattern = Pattern::parse("()").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 4);
+
+        for (index, m) in matches.iter().enumerate() {
+            assert_eq!(m.as_str(), "");
+            assert_eq!(m.start(), index);
+            assert_eq!(m.end(), index);
+            assert_eq!(m.capture(0), Some(CaptureValue::Position(index)));
+        }
+    }
+
+    #[test]
+    fn find_all_handles_empty_matches_with_utf8() {
+        let input = "안녕";
+        let pattern = Pattern::parse("()").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 3);
+
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 0);
+        assert_eq!(matches[0].capture(0), Some(CaptureValue::Position(0)));
+
+        assert_eq!(matches[1].start(), 1);
+        assert_eq!(matches[1].end(), 1);
+        assert_eq!(matches[1].capture(0), Some(CaptureValue::Position(1)));
+
+        assert_eq!(matches[2].start(), 2);
+        assert_eq!(matches[2].end(), 2);
+        assert_eq!(matches[2].capture(0), Some(CaptureValue::Position(2)));
+    }
+
+    #[test]
+    fn find_all_empty_match_advances_by_one_character_not_one_byte() {
+        let input = "a안b";
+        let pattern = Pattern::parse("()").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 4);
+
+        let positions: Vec<_> = matches
+            .iter()
+            .map(|m| (m.start(), m.start_byte()))
+            .collect();
+
+        assert_eq!(positions, vec![(0, 0), (1, 1), (2, 4), (3, 5),]);
+
+        let captures: Vec<_> = matches.iter().map(|m| m.capture(0)).collect();
+
+        assert_eq!(
+            captures,
+            vec![
+                Some(CaptureValue::Position(0)),
+                Some(CaptureValue::Position(1)),
+                Some(CaptureValue::Position(2)),
+                Some(CaptureValue::Position(3)),
+            ]
+        );
+    }
+
+    #[test]
+    fn find_all_empty_match_on_empty_input() {
+        let input = "";
+        let pattern = Pattern::parse("()").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].as_str(), "");
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 0);
+        assert_eq!(matches[0].capture(0), Some(CaptureValue::Position(0)));
+    }
+
+    #[test]
+    fn find_all_multiple_positional_captures() {
+        let input = "안녕 안녕";
+        let pattern = Pattern::parse("()안").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches.len(), 2);
+
+        assert_eq!(matches[0].as_str(), "안");
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 1);
+        assert_eq!(matches[0].capture(0), Some(CaptureValue::Position(0)));
+
+        assert_eq!(matches[1].as_str(), "안");
+        assert_eq!(matches[1].start(), 3);
+        assert_eq!(matches[1].end(), 4);
+        assert_eq!(matches[1].capture(0), Some(CaptureValue::Position(3)));
+    }
+
+    #[test]
+    fn find_all_greedy_modifier_with_positional_capture() {
+        let input = "aaac";
+        let pattern = Pattern::parse("a*()ac").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+
+        assert_eq!(matches[0].as_str(), "aaac");
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 4);
+
+        // a* initially consumes all three 'a' characters but has to backtrack to match
+        // the remainder.
+        assert_eq!(matches[0].capture(0), Some(CaptureValue::Position(2)));
     }
 }

@@ -129,3 +129,222 @@ impl ReplacementString {
         output
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_with_replaces_all_matches() {
+        let input = "foo bar foo";
+        let pattern = Pattern::parse("foo").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |_| Ok::<_, ()>(Some("baz".to_owned())),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output, "baz bar baz");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn replace_with_leaves_non_matching_input_intact() {
+        let input = "hello world";
+        let pattern = Pattern::parse("xyz").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |_| Ok::<_, ()>(Some("replacement".to_owned())),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output, input);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn replace_with_replacement_can_be_empty() {
+        let input = "hello world";
+        let pattern = Pattern::parse(" ").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some(String::new())), None).unwrap();
+
+        assert_eq!(output, "helloworld");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn replace_with_none_keeps_original_match() {
+        let input = "foo bar foo";
+        let pattern = Pattern::parse("foo").unwrap();
+
+        let (output, count) = replace_with(input, &pattern, |_| Ok::<_, ()>(None), None).unwrap();
+
+        assert_eq!(output, input);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn replace_with_limit_zero_does_not_replace_anything() {
+        let input = "foo foo";
+        let pattern = Pattern::parse("foo").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |_| Ok::<_, ()>(Some("bar".to_owned())),
+            Some(0),
+        )
+        .unwrap();
+
+        assert_eq!(output, input);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn replace_with_limit_one_replaces_only_first_match() {
+        let input = "foo foo foo";
+        let pattern = Pattern::parse("foo").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |_| Ok::<_, ()>(Some("bar".to_owned())),
+            Some(1),
+        )
+        .unwrap();
+
+        assert_eq!(output, "bar foo foo");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn replace_with_limit_replaces_exact_number_of_matches() {
+        let input = "foo foo foo";
+        let pattern = Pattern::parse("foo").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |_| Ok::<_, ()>(Some("bar".to_owned())),
+            Some(3),
+        )
+        .unwrap();
+
+        assert_eq!(output, "bar bar bar");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn replace_with_limit_larger_than_number_of_matches_replaces_all() {
+        let input = "foo foo";
+        let pattern = Pattern::parse("foo").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |_| Ok::<_, ()>(Some("bar".to_owned())),
+            Some(10),
+        )
+        .unwrap();
+
+        assert_eq!(output, "bar bar");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn replace_with_adjacent_matches() {
+        let input = "aaaa";
+        let pattern = Pattern::parse("aa").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some("X".to_owned())), None).unwrap();
+
+        assert_eq!(output, "XX");
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn replace_with_empty_matches() {
+        let input = "abc";
+        let pattern = Pattern::parse("()").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some("X".to_owned())), None).unwrap();
+
+        assert_eq!(output, "XaXbXcX");
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn replace_with_empty_match_on_empty_input() {
+        let input = "";
+        let pattern = Pattern::parse("()").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some("X".to_owned())), None).unwrap();
+
+        assert_eq!(output, "X");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn replace_with_can_use_captures() {
+        let input = "hello world";
+        let pattern = Pattern::parse("(%a+) (%a+)").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |m| {
+                let first = match m.capture(0).unwrap() {
+                    CaptureValue::Text(value) => value,
+                    CaptureValue::Position(_) => unreachable!(),
+                };
+
+                let second = match m.capture(1).unwrap() {
+                    CaptureValue::Text(value) => value,
+                    CaptureValue::Position(_) => unreachable!(),
+                };
+
+                Ok::<_, ()>(Some(format!("{second} {first}")))
+            },
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output, "world hello");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn replace_with_can_use_positional_capture() {
+        let input = "aaac";
+        let pattern = Pattern::parse("a*()ac").unwrap();
+
+        let (output, count) = replace_with(
+            input,
+            &pattern,
+            |m| {
+                let position = match m.capture(0).unwrap() {
+                    CaptureValue::Position(position) => position,
+                    CaptureValue::Text(_) => unreachable!(),
+                };
+
+                Ok::<_, ()>(Some(format!("[{position}]")))
+            },
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output, "[2]");
+        assert_eq!(count, 1);
+    }
+}
