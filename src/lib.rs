@@ -511,14 +511,14 @@ fn l_len(
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
 
-    if !(1..=len).contains(&i) {
+    if !(1 <= i && i - 1 <= len) {
         // TODO: use mlua::Error:BadArgument?
         return Err(mlua::Error::runtime(
             "bad argument: initial position out of bounds",
         ));
     }
 
-    if !(1..=len).contains(&j) {
+    if !(j <= len) {
         // TODO: use mlua::Error:BadArgument?
         return Err(mlua::Error::runtime(
             "bad argument: final position out of bounds",
