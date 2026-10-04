@@ -94,6 +94,16 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
     Ok(exports)
 }
 
+/// Helper for constructing a `mlua::Error::BadArgument`
+fn bad_argument(to: impl Into<String>, pos: usize, cause: mlua::Error) -> mlua::Error {
+    mlua::Error::BadArgument {
+        to: Some(to.into()),
+        pos: pos + 1,
+        name: None,
+        cause: std::sync::Arc::new(cause),
+    }
+}
+
 fn capture_value_to_lua(lua: &Lua, v: CaptureValue<'_>) -> Value {
     match v {
         CaptureValue::Text(t) => Value::String(lua.create_string(t).unwrap()),
@@ -298,16 +308,50 @@ fn l_byte(
     }
 }
 
-/// Returns a string with each argument converted to a UTF-8 byte sequence.
-fn l_char(_lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<String> {
-    let mut result = String::with_capacity(args.len());
-    for arg in args {
-        // TODO: use `BadArgument` error
-        let ch =
-            char::from_u32(arg as u32).ok_or_else(|| mlua::Error::runtime("value out of range"))?;
-        result.push(ch);
+/// Returns a string containing the UTF-8 encoding of each given code point.
+///
+/// Code points in the surrogate range (`U+D800`-`U+DFFF`) are encoded as WTF-8, as in the original
+/// `luautf8` implementation.
+///
+/// Values outside the Unicode range (`0x0000`-`0x10FFFF`) are rejected.
+fn l_char(lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<LuaString> {
+    let mut bytes = Vec::with_capacity(args.len());
+
+    for (n, cp) in args.iter().enumerate() {
+        if !(0..0x110000).contains(cp) {
+            return Err(bad_argument(
+                "char",
+                n,
+                mlua::Error::runtime("value out of range"),
+            ));
+        }
+
+        let cp = *cp as u32;
+
+        match cp {
+            0x0000..0x0080 => {
+                bytes.push(cp as u8);
+            }
+            0x0080..0x0800 => {
+                bytes.push(0xC0 | (cp >> 6) as u8);
+                bytes.push(0x80 | (cp & 0x3F) as u8);
+            }
+            0x0800..0x010000 => {
+                bytes.push(0xE0 | (cp >> 12) as u8);
+                bytes.push(0x80 | (cp >> 6 & 0x3F) as u8);
+                bytes.push(0x80 | (cp & 0x3F) as u8);
+            }
+            0x010000..0x110000 => {
+                bytes.push(0xF0 | (cp >> 18) as u8);
+                bytes.push(0x80 | (cp >> 12 & 0x3F) as u8);
+                bytes.push(0x80 | (cp >> 6 & 0x3F) as u8);
+                bytes.push(0x80 | (cp & 0x3F) as u8);
+            }
+            _ => unreachable!(),
+        }
     }
-    Ok(result)
+
+    lua.create_string(bytes)
 }
 
 /// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
@@ -700,7 +744,7 @@ fn l_next(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn bad_arg(to: &str, pos: usize, expected: &str, got: &str) -> mlua::Error {
+fn bad_arg_with_expected(to: &str, pos: usize, expected: &str, got: &str) -> mlua::Error {
     mlua::Error::runtime(format!(
         "bad argument #{pos} to '{to}' ({expected} expected, got {got})"
     ))
@@ -747,8 +791,19 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
     };
     let subs = match subs_arg {
         Some(Value::String(s)) => s.as_bytes(),
-        Some(other) => return Err(bad_arg("insert", subs_pos, "string", other.type_name())),
-        None => return Err(bad_arg("insert", subs_pos, "string", "no value")),
+        Some(other) => {
+            return Err(bad_arg_with_expected(
+                "insert",
+                subs_pos,
+                "string",
+                other.type_name(),
+            ));
+        }
+        None => {
+            return Err(bad_arg_with_expected(
+                "insert", subs_pos, "string", "no value",
+            ));
+        }
     };
 
     let s = s.as_bytes();
