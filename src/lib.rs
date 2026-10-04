@@ -360,8 +360,10 @@ fn l_find(
     (s, pattern, init, plain): (String, String, Option<i32>, Option<bool>),
 ) -> LuaResult<MultiValue> {
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
-    let Some(start_byte) = char_pos(s.as_bytes(), init as isize) else {
-        return (mlua::Value::Nil,).into_lua_multi(lua);
+    let start_byte = match char_pos(s.as_bytes(), init as isize) {
+        Some(start) => start,
+        None if init <= 0 => 1,
+        None => return (mlua::Value::Nil,).into_lua_multi(lua),
     };
 
     if plain.unwrap_or(false) {
@@ -551,8 +553,10 @@ fn l_len(
 /// Matches pattern in `s`, returning the captures (or the whole match).
 fn l_match(lua: &Lua, (s, pattern, init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
-    let Some(start_byte) = char_pos(s.as_bytes(), init as isize) else {
-        return (mlua::Value::Nil,).into_lua_multi(lua);
+    let start_byte = match char_pos(s.as_bytes(), init as isize) {
+        Some(start) => start,
+        None if init <= 0 => 1,
+        None => return (mlua::Value::Nil,).into_lua_multi(lua),
     };
 
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
