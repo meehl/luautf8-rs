@@ -236,10 +236,14 @@ impl<'s> Parser<'s> {
         match ch {
             'b' => self.parse_balanced(),
             'f' => self.parse_frontier(),
-            '1'..='9' => Ok(Item::CaptureRef(
-                ch.to_digit(10).expect("ch is a digit") as u8
-            )),
-            '0' => Err(self.error("invalid capture index &0")),
+            '1'..='9' => {
+                let index = ch.to_digit(10).expect("ch is a digit");
+                if self.open_capture_stack.contains(&((index - 1) as usize)) {
+                    return Err(self.error(format!("invalid capture index %{index}")));
+                }
+                Ok(Item::CaptureRef(index as u8))
+            }
+            '0' => Err(self.error("invalid capture index %0")),
             c if c.is_ascii_alphabetic() => {
                 let modifier = self.parse_modifier();
                 if let Some(class) = PredefinedClass::from_char(c) {
@@ -1453,7 +1457,7 @@ mod tests {
     #[test]
     fn invalid_patterns() {
         let patterns = [
-            "(", "(abc", ")", "[", "[abc", "%", "%b", "%b(", "%f", "%fa", "%f[", "%0",
+            "(", "(abc", ")", "[", "[abc", "%", "%b", "%b(", "%f", "%fa", "%f[", "%0", "(%1)",
         ];
 
         for source in patterns {
