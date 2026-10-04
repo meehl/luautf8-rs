@@ -116,13 +116,13 @@ fn capture_value_to_lua(lua: &Lua, v: CaptureValue<'_>) -> Value {
 /// Positive indices are returned unchanged. Negative indices count backward from the end, with
 /// `-1` referring to the last position. A negative index that refers before the first position
 /// results in `0`.
-fn normalize_lua_index(pos: i32, len: usize) -> usize {
+fn normalize_lua_index(pos: LuaInteger, len: usize) -> usize {
     if pos >= 0 {
         pos as usize
     } else if pos.unsigned_abs() as usize > len {
         0
     } else {
-        (len as i32 + pos + 1) as usize
+        (len as LuaInteger + pos + 1) as usize
     }
 }
 
@@ -134,16 +134,19 @@ fn normalize_lua_index(pos: i32, len: usize) -> usize {
 ///
 /// As a special case, when n is 0 the function returns the start of the encoding of the character
 /// that contains the i-th byte of s. This function assumes that s is a valid UTF-8 string.
-fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<MultiValue> {
+fn l_offset(
+    lua: &Lua,
+    (s, n, i): (String, LuaInteger, Option<LuaInteger>),
+) -> LuaResult<MultiValue> {
     let len = s.len();
     let i = match i {
-        Some(i) if i < 0 => len as i32 + i + 1,
+        Some(i) if i < 0 => len as LuaInteger + i + 1,
         Some(i) => i,
         None if n >= 0 => 1,
-        None => len as i32 + 1,
+        None => len as LuaInteger + 1,
     };
 
-    if !(1..=len as i32 + 1).contains(&i) {
+    if !(1..=len as LuaInteger + 1).contains(&i) {
         // TODO: use mlua::Error:BadArgument?
         return Err(mlua::Error::runtime("bad argument: position out of range"));
     }
@@ -168,7 +171,7 @@ fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<Multi
             .rev()
             .nth((-n - 1) as usize)
             .map(|(offset, _)| offset),
-        _ => unreachable!("i32 must be zero, positive, or negative"),
+        _ => unreachable!("LuaInteger must be zero, positive, or negative"),
     };
 
     let Some(start) = start else {
@@ -190,8 +193,13 @@ fn l_offset(lua: &Lua, (s, n, i): (String, i32, Option<i32>)) -> LuaResult<Multi
 /// NOTE: orignal luautf8 docs claim `j` defaults to `#s` but it actually defaults to `i`.
 fn l_codepoint(
     _lua: &Lua,
-    (s, i, j, lax): (LuaString, Option<i32>, Option<i32>, Option<bool>),
-) -> LuaResult<Variadic<u32>> {
+    (s, i, j, lax): (
+        LuaString,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
+        Option<bool>,
+    ),
+) -> LuaResult<Variadic<LuaInteger>> {
     let bytes = s.as_bytes().to_vec();
     let len = bytes.len();
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
@@ -222,7 +230,7 @@ fn l_codepoint(
         else {
             break;
         };
-        result.push(ch as u32);
+        result.push(ch as LuaInteger);
     }
 
     Ok(result)
@@ -236,7 +244,7 @@ fn l_codes(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<Function
 
     let mut pos = 0;
     lua.create_function_mut(move |lua, ()| match next_char(&bytes, &mut pos, lax) {
-        Ok(Some((pos, ch))) => (pos + 1, ch as u32).into_lua_multi(lua),
+        Ok(Some((pos, ch))) => (pos + 1, ch as LuaInteger).into_lua_multi(lua),
         Ok(None) => (Value::Nil,).into_lua_multi(lua),
         Err(_) => Err(mlua::Error::runtime("invalid UTF-8 codepoint")),
     })
@@ -286,14 +294,14 @@ fn next_char(
 /// Returns the internal numeric codes of the characters of `s`.
 fn l_byte(
     _lua: &Lua,
-    (s, start, end): (LuaString, Option<i32>, Option<i32>),
-) -> LuaResult<Variadic<i32>> {
+    (s, start, end): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
+) -> LuaResult<Variadic<LuaInteger>> {
     let s = s
         .to_str()
         .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-    let len = s.chars().count() as i32;
+    let len = s.chars().count() as LuaInteger;
 
-    let normalize = |idx: i32| if idx >= 0 { idx } else { len + idx + 1 };
+    let normalize = |idx: LuaInteger| if idx >= 0 { idx } else { len + idx + 1 };
     let i = normalize(start.unwrap_or(1)).max(1);
     let j = normalize(end.unwrap_or(start.unwrap_or(1))).min(len);
 
@@ -303,7 +311,7 @@ fn l_byte(
         Ok(s.chars()
             .skip((i - 1) as usize)
             .take((j - i + 1) as usize)
-            .map(|ch| ch as i32)
+            .map(|ch| ch as LuaInteger)
             .collect())
     }
 }
@@ -357,7 +365,7 @@ fn l_char(lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<LuaString> {
 /// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
 fn l_find(
     lua: &Lua,
-    (s, pattern, init, plain): (String, String, Option<i32>, Option<bool>),
+    (s, pattern, init, plain): (String, String, Option<LuaInteger>, Option<bool>),
 ) -> LuaResult<MultiValue> {
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
     let start_byte = match char_pos(s.as_bytes(), init as isize) {
@@ -467,7 +475,7 @@ impl LuaReplacement {
 /// number of substitutions. A maximum of `n` (default: unlimited) replacements will be performed.
 fn l_gsub(
     lua: &Lua,
-    (s, pattern, repl, n): (String, String, Value, Option<i32>),
+    (s, pattern, repl, n): (String, String, Value, Option<LuaInteger>),
 ) -> LuaResult<(String, usize)> {
     let pattern =
         Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
@@ -505,7 +513,12 @@ fn l_gsub(
 /// UTF-8 string. When lax is true, invalid sequences are counted leniently instead of failing.
 fn l_len(
     lua: &Lua,
-    (s, i, j, lax): (LuaString, Option<i32>, Option<i32>, Option<bool>),
+    (s, i, j, lax): (
+        LuaString,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
+        Option<bool>,
+    ),
 ) -> LuaResult<MultiValue> {
     let bytes = s.as_bytes();
     let len = bytes.len();
@@ -551,7 +564,10 @@ fn l_len(
 }
 
 /// Matches pattern in `s`, returning the captures (or the whole match).
-fn l_match(lua: &Lua, (s, pattern, init): (String, String, Option<i32>)) -> LuaResult<MultiValue> {
+fn l_match(
+    lua: &Lua,
+    (s, pattern, init): (String, String, Option<LuaInteger>),
+) -> LuaResult<MultiValue> {
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
     let start_byte = match char_pos(s.as_bytes(), init as isize) {
         Some(start) => start,
@@ -596,10 +612,13 @@ fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaStr
 }
 
 /// Returns the substring of `s` starting at `start` and ending at `end`.
-fn l_sub(_lua: &Lua, (s, start, end): (String, i32, Option<i32>)) -> LuaResult<String> {
-    let len = s.chars().count() as i32;
+fn l_sub(
+    _lua: &Lua,
+    (s, start, end): (String, LuaInteger, Option<LuaInteger>),
+) -> LuaResult<String> {
+    let len = s.chars().count() as LuaInteger;
 
-    let normalize = |idx: i32| if idx >= 0 { idx } else { len + idx + 1 };
+    let normalize = |idx: LuaInteger| if idx >= 0 { idx } else { len + idx + 1 };
     let i = normalize(start).max(1);
     let j = normalize(end.unwrap_or(-1)).min(len);
 
@@ -688,7 +707,7 @@ pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> L
 /// optional arguments they are `i` (byte position) and `n` (character count after `i`).
 fn l_charpos(
     lua: &Lua,
-    (s, i_or_n, n): (LuaString, Option<i32>, Option<i32>),
+    (s, i_or_n, n): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
 ) -> LuaResult<MultiValue> {
     let s = s
         .to_str()
@@ -738,7 +757,7 @@ fn l_charpos(
     };
 
     if let Some((offset, ch)) = char_index {
-        (base + offset + 1, ch as u32).into_lua_multi(lua)
+        (base + offset + 1, ch as LuaInteger).into_lua_multi(lua)
     } else {
         mlua::Nil.into_lua_multi(lua)
     }
@@ -788,9 +807,9 @@ fn char_pos(bytes: &[u8], n: isize) -> Option<usize> {
 fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaString> {
     let mut args = args.into_iter();
     let arg2 = args.next();
-    let (idx, subs_arg, subs_pos): (Option<i64>, Option<Value>, usize) = match &arg2 {
+    let (idx, subs_arg, subs_pos): (Option<LuaInteger>, Option<Value>, usize) = match &arg2 {
         Some(Value::Integer(i)) => (Some(*i), args.next(), 3),
-        Some(Value::Number(n)) => (Some(*n as i64), args.next(), 3),
+        Some(Value::Number(n)) => (Some(*n as LuaInteger), args.next(), 3),
         _ => (None, arg2, 2),
     };
     let subs = match subs_arg {
@@ -833,7 +852,10 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
 
 /// Deletes a substring from s: from i to j (inclusive), or the last character when neither is
 /// given.
-fn l_remove(lua: &Lua, (s, i, j): (LuaString, Option<i32>, Option<i32>)) -> LuaResult<LuaString> {
+fn l_remove(
+    lua: &Lua,
+    (s, i, j): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
+) -> LuaResult<LuaString> {
     let s = s.as_bytes();
     let i = i.unwrap_or(-1);
     let j = j.unwrap_or(-1);
@@ -879,7 +901,7 @@ fn next_optional<T: FromLua>(
 
 /// Calculates the display width of `s` (or of a substring) in columns, or of a single code point
 /// when given a number.
-fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
+fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
     let mut args = args.into_iter();
 
     let first_arg = args
@@ -892,10 +914,10 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
             let s = lua_string
                 .to_str()
                 .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-            let i = next_optional::<i32>(lua, &mut args)?.unwrap_or(1);
-            let j = next_optional::<i32>(lua, &mut args)?.unwrap_or(len as i32);
-            let ambi_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(1) as usize;
-            let default_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(0) as usize;
+            let i = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(1);
+            let j = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(len as LuaInteger);
+            let ambi_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(1) as usize;
+            let default_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(0) as usize;
 
             let i = normalize_lua_index(i, len);
             let j = normalize_lua_index(j, len);
@@ -923,17 +945,17 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<i64> {
                 .chars()
                 .fold(0, |acc, ch| acc + ch_width(ch, ambi_width, default_width));
 
-            Ok(total as i64)
+            Ok(total as LuaInteger)
         }
         Value::Integer(codepoint) => {
-            let ambi_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(1) as usize;
-            let default_width = next_optional::<i32>(lua, &mut args)?.unwrap_or(0) as usize;
+            let ambi_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(1) as usize;
+            let default_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(0) as usize;
 
             let Some(ch) = char::from_u32(codepoint as u32) else {
                 return Ok(1);
             };
 
-            Ok(ch_width(ch, ambi_width, default_width) as i64)
+            Ok(ch_width(ch, ambi_width, default_width) as LuaInteger)
         }
         other => Err(mlua::Error::runtime(format!(
             "number/string expected, got {}",
@@ -948,11 +970,11 @@ fn l_widthindex(
     lua: &Lua,
     (s, width, i, j, ambi_width, default_width): (
         LuaString,
-        i32,
-        Option<i32>,
-        Option<i32>,
-        Option<i32>,
-        Option<i32>,
+        LuaInteger,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
     ),
 ) -> LuaResult<MultiValue> {
     let len = s.as_bytes().len();
@@ -1009,11 +1031,11 @@ fn l_widthlimit(
     lua: &Lua,
     (s, limit, i, j, ambi_width, default_width): (
         LuaString,
-        i32,
-        Option<i32>,
-        Option<i32>,
-        Option<i32>,
-        Option<i32>,
+        LuaInteger,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
+        Option<LuaInteger>,
     ),
 ) -> LuaResult<MultiValue> {
     let len = s.as_bytes().len();
@@ -1053,11 +1075,11 @@ fn l_widthlimit(
     let index = if width >= 0 {
         for (byte_pos, ch) in chars {
             let ch_width = ch_width(ch, ambi_width, default_width);
-            if width < ch_width as i32 {
+            if width < ch_width as LuaInteger {
                 break;
             }
 
-            width -= ch_width as i32;
+            width -= ch_width as LuaInteger;
             pos = byte_pos + ch.len_utf8();
 
             if width == 0 {
@@ -1071,11 +1093,11 @@ fn l_widthlimit(
 
         for (byte_pos, ch) in chars.rev() {
             let ch_width = ch_width(ch, ambi_width, default_width);
-            if -width < ch_width as i32 {
+            if -width < ch_width as LuaInteger {
                 break;
             }
 
-            width += ch_width as i32;
+            width += ch_width as LuaInteger;
             pos = byte_pos;
 
             if width == 0 {
@@ -1090,7 +1112,7 @@ fn l_widthlimit(
 }
 
 // Compares a and b without case: -1 if a < b, 0 if equal, 1 if a > b.
-fn l_ncasecmp(_lua: &Lua, (a, b): (LuaString, LuaString)) -> LuaResult<i32> {
+fn l_ncasecmp(_lua: &Lua, (a, b): (LuaString, LuaString)) -> LuaResult<LuaInteger> {
     let a = a
         .to_str()
         .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
@@ -1170,9 +1192,11 @@ fn l_clean(
 /// Returns the byte position position within s of the first invalid UTF-8 byte sequence (1 is the
 /// first byte of the string). If s is a valid UTF-8 string, returns nil. The default for i is 1.
 /// The optional numeric argument i specifies where to start the search and can be negative.
-fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<i32>)) -> LuaResult<Value> {
+fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<LuaInteger>)) -> LuaResult<Value> {
     let len = s.as_bytes().len();
-    let start = i.map_or(1, |i| (if i >= 0 { i } else { len as i32 + i + 1 }).max(1));
+    let start = i.map_or(1, |i| {
+        (if i >= 0 { i } else { len as LuaInteger + i + 1 }).max(1)
+    });
     let start = (start - 1) as usize; // translate to 0-based index
     match std::str::from_utf8(&s.as_bytes()[start..]) {
         Ok(_) => Ok(mlua::Nil),
@@ -1207,7 +1231,7 @@ fn l_normalize_nfc(lua: &Lua, s: LuaString) -> LuaResult<(LuaString, bool)> {
 /// of each cluster.
 fn l_grapheme_indices(
     lua: &Lua,
-    (s, i, j): (LuaString, Option<i32>, Option<i32>),
+    (s, i, j): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
 ) -> LuaResult<Function> {
     let s = s
         .to_str()
@@ -1259,11 +1283,11 @@ macro_rules! make_case_mapper {
             match s {
                 Value::Integer(n) => {
                     let Some(ch) = char::from_u32(n as u32) else {
-                        return (n as u32).into_lua(lua);
+                        return (n as LuaInteger).into_lua(lua);
                     };
 
                     let mapper = CaseMapper::new();
-                    (mapper.$variant(ch) as u32).into_lua(lua)
+                    (mapper.$variant(ch) as LuaInteger).into_lua(lua)
                 }
                 Value::String(lua_string) => {
                     let s = lua_string
