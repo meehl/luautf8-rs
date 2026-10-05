@@ -146,9 +146,12 @@ fn l_offset(
         None => len as LuaInteger + 1,
     };
 
-    if !(1..=len as LuaInteger + 1).contains(&i) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime("bad argument: position out of range"));
+    if !(1 <= i && i - 1 <= len as LuaInteger) {
+        return Err(bad_argument(
+            "offset",
+            3,
+            mlua::Error::runtime("position out of bounds"),
+        ));
     }
 
     let pos = (i - 1) as usize; // translate to 0-based index
@@ -206,15 +209,20 @@ fn l_codepoint(
     let j = j.map_or(i, |j| normalize_lua_index(j, len));
     let lax = lax.unwrap_or(false);
 
-    // TODO: use mlua::Error::BadArgument
     if !(i >= 1) {
-        return Err(mlua::Error::runtime("bad argument: out of bounds"));
+        return Err(bad_argument(
+            "codepoint",
+            2,
+            mlua::Error::runtime("out of bounds"),
+        ));
     }
     if !(j <= len) {
-        return Err(mlua::Error::runtime("bad argument: out of bounds"));
+        return Err(bad_argument(
+            "codepoint",
+            3,
+            mlua::Error::runtime("out of bounds"),
+        ));
     }
-
-    // TODO: deal with ranges that are too long
 
     if i > j {
         return Ok(Variadic::new());
@@ -527,16 +535,18 @@ fn l_len(
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
 
     if !(1 <= i && i - 1 <= len) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime(
-            "bad argument: initial position out of bounds",
+        return Err(bad_argument(
+            "len",
+            2,
+            mlua::Error::runtime("initial position out of bounds"),
         ));
     }
 
     if !(j <= len) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime(
-            "bad argument: final position out of bounds",
+        return Err(bad_argument(
+            "len",
+            3,
+            mlua::Error::runtime("final position out of bounds"),
         ));
     }
 
@@ -767,12 +777,6 @@ fn l_next(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
     todo!()
 }
 
-fn bad_arg_with_expected(to: &str, pos: usize, expected: &str, got: &str) -> mlua::Error {
-    mlua::Error::runtime(format!(
-        "bad argument #{pos} to '{to}' ({expected} expected, got {got})"
-    ))
-}
-
 fn next_char_pos(bytes: &[u8]) -> Option<usize> {
     bytes
         .iter()
@@ -815,16 +819,17 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
     let subs = match subs_arg {
         Some(Value::String(s)) => s.as_bytes(),
         Some(other) => {
-            return Err(bad_arg_with_expected(
+            return Err(bad_argument(
                 "insert",
                 subs_pos,
-                "string",
-                other.type_name(),
+                mlua::Error::runtime(format!("string expected, got {}", other.type_name())),
             ));
         }
         None => {
-            return Err(bad_arg_with_expected(
-                "insert", subs_pos, "string", "no value",
+            return Err(bad_argument(
+                "insert",
+                subs_pos,
+                mlua::Error::runtime("string expected, got no value"),
             ));
         }
     };
@@ -835,9 +840,8 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
         let at = if idx == 0 {
             s.len()
         } else {
-            char_pos(&s, idx as isize).ok_or_else(|| {
-                mlua::Error::runtime("bad argument #2 to 'insert' (invalid index)")
-            })?
+            char_pos(&s, idx as isize)
+                .ok_or_else(|| bad_argument("insert", 2, mlua::Error::runtime("invalid index")))?
         };
         buf.extend_from_slice(&s[..at]);
         buf.extend_from_slice(&subs);
@@ -923,16 +927,18 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
             let j = normalize_lua_index(j, len);
 
             if !(1 <= i && i - 1 <= len) {
-                // TODO: use mlua::Error:BadArgument?
-                return Err(mlua::Error::runtime(
-                    "bad argument: initial position out of bounds",
+                return Err(bad_argument(
+                    "width",
+                    2,
+                    mlua::Error::runtime("initial position out of bounds"),
                 ));
             }
 
             if !(j <= len) {
-                // TODO: use mlua::Error:BadArgument?
-                return Err(mlua::Error::runtime(
-                    "bad argument: final position out of bounds",
+                return Err(bad_argument(
+                    "width",
+                    3,
+                    mlua::Error::runtime("final position out of bounds"),
                 ));
             }
 
@@ -988,16 +994,18 @@ fn l_widthindex(
     let default_width = default_width.unwrap_or(0) as usize;
 
     if !(1 <= i && i - 1 <= len) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime(
-            "bad argument: initial position out of bounds",
+        return Err(bad_argument(
+            "widthindex",
+            3,
+            mlua::Error::runtime("initial position out of bounds"),
         ));
     }
 
     if !(j <= len) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime(
-            "bad argument: final position out of bounds",
+        return Err(bad_argument(
+            "widthindex",
+            4,
+            mlua::Error::runtime("final position out of bounds"),
         ));
     }
 
@@ -1049,16 +1057,18 @@ fn l_widthlimit(
     let default_width = default_width.unwrap_or(0) as usize;
 
     if !(1 <= i && i - 1 <= len) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime(
-            "bad argument: initial position out of bounds",
+        return Err(bad_argument(
+            "widthlimit",
+            3,
+            mlua::Error::runtime("initial position out of bounds"),
         ));
     }
 
     if !(j <= len) {
-        // TODO: use mlua::Error:BadArgument?
-        return Err(mlua::Error::runtime(
-            "bad argument: final position out of bounds",
+        return Err(bad_argument(
+            "widthlimit",
+            4,
+            mlua::Error::runtime("final position out of bounds"),
         ));
     }
 
@@ -1241,13 +1251,18 @@ fn l_grapheme_indices(
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
 
     if !(i >= 1) {
-        // TODO: use BadArgument
-        return Err(mlua::Error::runtime("bad argument: position out of range"));
+        return Err(bad_argument(
+            "grapheme_indices",
+            2,
+            mlua::Error::runtime("out of range"),
+        ));
     }
-
     if !(j <= len) {
-        // TODO: use BadArgument
-        return Err(mlua::Error::runtime("bad argument: position out of range"));
+        return Err(bad_argument(
+            "grapheme_indices",
+            3,
+            mlua::Error::runtime("out of range"),
+        ));
     }
 
     let start = i - 1;
