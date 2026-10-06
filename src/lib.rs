@@ -1336,3 +1336,16 @@ make_case_mapper!(l_fold, simple_fold, "folded case");
 fn luautf8(lua: &Lua) -> LuaResult<Table> {
     create_module(lua)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::create_module;
+
+    #[test]
+    fn api_is_compatibile() -> Result<(), mlua::Error> {
+        let lua = mlua::Lua::new();
+        let module = create_module(&lua).unwrap();
+        lua.register_module("lua-utf8", module).unwrap();
+        lua.load(std::path::Path::new("tests/compat.lua")).exec()
+    }
+}
