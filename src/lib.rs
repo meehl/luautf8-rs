@@ -922,6 +922,10 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
                 ));
             }
 
+            if i > j {
+                return Ok(0);
+            }
+
             let start = i - 1;
             let end = j;
 
@@ -987,6 +991,10 @@ fn l_widthindex(
             4,
             mlua::Error::runtime("final position out of bounds"),
         ));
+    }
+
+    if i > j {
+        return 0.into_lua_multi(lua);
     }
 
     let start = i - 1;
