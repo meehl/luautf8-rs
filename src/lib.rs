@@ -10,6 +10,7 @@
 //! table and register it with a [`mlua::Lua`] instance directly.
 
 mod lua_pattern;
+mod utf8;
 
 use std::{iter::Peekable, str::Chars};
 
@@ -25,8 +26,12 @@ use mlua::{
 use unicode_normalization::{UnicodeNormalization, is_nfc};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::lua_pattern::{
-    CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch, replace_with,
+use crate::{
+    lua_pattern::{
+        CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch,
+        replace_with,
+    },
+    utf8::{decode_utf8, invalid_codepoint},
 };
 
 // TODO: pattern depends on lua version
@@ -233,12 +238,14 @@ fn l_codepoint(
     let mut result = Variadic::new();
     let mut pos = start;
     while pos < end {
-        let Some((_, ch)) = next_char(&bytes, &mut pos, lax)
-            .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?
-        else {
-            break;
-        };
-        result.push(ch as LuaInteger);
+        let at = pos;
+        let (cp, consumed) = decode_utf8(&bytes[at..])
+            .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+        pos += consumed;
+        if !lax && invalid_codepoint(cp) {
+            return Err(mlua::Error::runtime("invalid UTF-8 codepoint"));
+        }
+        result.push(cp as LuaInteger);
     }
 
     Ok(result)
@@ -248,55 +255,24 @@ fn l_codepoint(
 /// UTF-8 character. When lax is true, invalid sequences are skipped instead of raising an error.
 fn l_codes(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<Function> {
     let bytes = s.as_bytes().to_vec();
+    let len = bytes.len();
     let lax = lax.unwrap_or(false);
 
     let mut pos = 0;
-    lua.create_function_mut(move |lua, ()| match next_char(&bytes, &mut pos, lax) {
-        Ok(Some((pos, ch))) => (pos + 1, ch as LuaInteger).into_lua_multi(lua),
-        Ok(None) => (Value::Nil,).into_lua_multi(lua),
-        Err(_) => Err(mlua::Error::runtime("invalid UTF-8 codepoint")),
-    })
-}
-
-fn next_char(
-    bytes: &[u8],
-    pos: &mut usize,
-    lax: bool,
-) -> Result<Option<(usize, char)>, std::str::Utf8Error> {
-    while *pos < bytes.len() {
-        let start = *pos;
-        let end = (start + 4).min(bytes.len());
-
-        match std::str::from_utf8(&bytes[start..end]) {
-            Ok(s) => {
-                let ch = s.chars().next().unwrap();
-                *pos += ch.len_utf8();
-                return Ok(Some((start, ch)));
+    lua.create_function_mut(move |lua, ()| {
+        if pos < len {
+            let at = pos;
+            let (cp, consumed) = decode_utf8(&bytes[at..])
+                .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+            pos += consumed;
+            if !lax && invalid_codepoint(cp) {
+                return Err(mlua::Error::runtime("invalid UTF-8 codepoint"));
             }
-            Err(e) => {
-                let valid = e.valid_up_to();
-
-                if valid > 0 {
-                    let ch = std::str::from_utf8(&bytes[start..start + valid])
-                        .unwrap()
-                        .chars()
-                        .next()
-                        .unwrap();
-
-                    *pos += ch.len_utf8();
-                    return Ok(Some((start, ch)));
-                }
-
-                if !lax {
-                    return Err(e);
-                }
-
-                *pos += e.error_len().unwrap_or(1);
-            }
+            (at + 1, cp as LuaInteger).into_lua_multi(lua)
+        } else {
+            (Value::Nil,).into_lua_multi(lua)
         }
-    }
-
-    Ok(None)
+    })
 }
 
 /// Returns the internal numeric codes of the characters of `s`.
