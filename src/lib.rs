@@ -31,7 +31,7 @@ use crate::{
         CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch,
         replace_with,
     },
-    utf8::{decode_utf8, invalid_codepoint},
+    utf8::{char_start, decode_utf8, invalid_codepoint, move_by_chars},
 };
 
 // TODO: pattern depends on lua version
@@ -749,8 +749,31 @@ fn l_charpos(
     }
 }
 
-fn l_next(_lua: &Lua, _args: MultiValue) -> LuaResult<MultiValue> {
-    todo!()
+fn l_next(
+    lua: &Lua,
+    (s, o, i): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
+) -> LuaResult<MultiValue> {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let offset = o.map_or(1, |offset| normalize_lua_index(offset, len));
+    let index = i.unwrap_or_else(|| if o.is_some() { 1 } else { 0 });
+
+    let position = if index == 0 {
+        char_start(&bytes, offset)
+    } else {
+        move_by_chars(&bytes, offset.max(1), index)
+    };
+
+    let Some(position) = position else {
+        return mlua::Nil.into_lua_multi(lua);
+    };
+
+    let cp = match decode_utf8(&bytes[position..]) {
+        Ok((cp, _)) => cp,
+        Err(_) => 0,
+    };
+
+    (cp, position + 1).into_lua_multi(lua)
 }
 
 fn next_char_pos(bytes: &[u8]) -> Option<usize> {

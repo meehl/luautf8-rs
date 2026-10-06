@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodeError;
 
-/// Decodes one RFC 2279 sequence from the start of `bytes`.
+/// Decodes one code point sequence from the start of `bytes` according to RFC 2279.
 ///
 /// Returns the code point and the number of bytes consumed.
 /// NOTE: The resulting code point is not validated!
@@ -39,4 +39,80 @@ pub fn decode_utf8(bytes: &[u8]) -> Result<(u32, usize), DecodeError> {
 
 pub fn invalid_codepoint(cp: u32) -> bool {
     cp > 0x10FFFF || (0xD800 <= cp && cp <= 0xDFFF)
+}
+
+/// Returns whether `byte` is a UTF-8 continuation-byte.
+#[inline]
+fn is_continuation_byte(byte: u8) -> bool {
+    byte & 0xC0 == 0x80
+}
+
+/// Returns the byte position of the encoded code point immediately before `position`.
+#[inline]
+fn previous_char_position(bytes: &[u8], position: usize) -> Option<usize> {
+    if position == 0 || position > bytes.len() {
+        return None;
+    }
+
+    let mut position = position - 1;
+
+    while position > 0 && is_continuation_byte(bytes[position]) {
+        position -= 1;
+    }
+
+    Some(position)
+}
+
+/// Returns the byte position of the encoded codepoint immediately after `position`.
+#[inline]
+fn next_char_position(bytes: &[u8], position: usize) -> Option<usize> {
+    if position >= bytes.len() {
+        return None;
+    }
+
+    let mut position = position + 1;
+
+    while position < bytes.len() && is_continuation_byte(bytes[position]) {
+        position += 1;
+    }
+
+    (position < bytes.len()).then_some(position)
+}
+
+/// Returns the start of the encoded code point containing `position`.
+pub fn char_start(bytes: &[u8], position: usize) -> Option<usize> {
+    if position >= bytes.len() {
+        return None;
+    }
+
+    if is_continuation_byte(bytes[position]) {
+        previous_char_position(bytes, position)
+    } else {
+        Some(position)
+    }
+}
+
+/// Moves `distance` encoded code points from the `start` position and returns the byte position.
+///
+/// A distance of zero returns `start`. Positive distances move forward and negative distances
+/// move backward.
+/// Returns `None` if the requested position lies outside the slice.
+pub fn move_by_chars(bytes: &[u8], start: usize, distance: i64) -> Option<usize> {
+    if start >= bytes.len() {
+        return None;
+    }
+
+    let mut position = start;
+
+    if distance >= 0 {
+        for _ in 0..distance {
+            position = next_char_position(bytes, position)?;
+        }
+    } else {
+        for _ in 0..-distance {
+            position = previous_char_position(bytes, position)?;
+        }
+    }
+
+    Some(position)
 }
