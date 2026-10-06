@@ -135,14 +135,6 @@ fn normalize_lua_index(pos: LuaInteger, len: usize) -> usize {
     }
 }
 
-/// Returns the position (in bytes) where the encoding of the n-th character of s (counting from
-/// position i) starts. A negative n gets characters before position i. The default for i is 1 when
-/// n is non-negative and #s + 1 otherwise, so that utf8.offset(s, -n) gets the offset of the n-th
-/// character from the end of the string. If the specified character is neither in the subject nor
-/// right after its end, the function returns nil.
-///
-/// As a special case, when n is 0 the function returns the start of the encoding of the character
-/// that contains the i-th byte of s. This function assumes that s is a valid UTF-8 string.
 fn l_offset(
     lua: &Lua,
     (s, n, i): (String, LuaInteger, Option<LuaInteger>),
@@ -199,10 +191,6 @@ fn l_offset(
     (start + 1, end + 1).into_lua_multi(lua)
 }
 
-/// Returns the code points of the substring starting at position `i` and ending at `j` (both
-/// inclusive, default 1 and i). When `lax` is true, invalid code points such as surrogates are
-/// returned instead of raising an error.
-/// NOTE: orignal luautf8 docs claim `j` defaults to `#s` but it actually defaults to `i`.
 fn l_codepoint(
     _lua: &Lua,
     (s, i, j, lax): (
@@ -215,6 +203,7 @@ fn l_codepoint(
     let bytes = s.as_bytes().to_vec();
     let len = bytes.len();
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
+    // NOTE: `luautf8` docs claim `j` defaults to `len` but it's actually `i`.
     let j = j.map_or(i, |j| normalize_lua_index(j, len));
     let lax = lax.unwrap_or(false);
 
@@ -255,8 +244,6 @@ fn l_codepoint(
     Ok(result)
 }
 
-/// Returns an iterator over of `s` that returns the position (in bytes) and codepoint of each
-/// UTF-8 character. When lax is true, invalid sequences are skipped instead of raising an error.
 fn l_codes(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<Function> {
     let bytes = s.as_bytes().to_vec();
     let len = bytes.len();
@@ -279,7 +266,6 @@ fn l_codes(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<Function
     })
 }
 
-/// Returns the internal numeric codes of the characters of `s`.
 fn l_byte(
     _lua: &Lua,
     (s, start, end): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
@@ -304,12 +290,6 @@ fn l_byte(
     }
 }
 
-/// Returns a string containing the UTF-8 encoding of each given code point.
-///
-/// Code points in the surrogate range (`U+D800`-`U+DFFF`) are encoded as WTF-8, as in the original
-/// `luautf8` implementation.
-///
-/// Values outside the Unicode range (`0x0000`-`0x10FFFF`) are rejected.
 fn l_char(lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<LuaString> {
     let mut bytes = Vec::with_capacity(args.len());
 
@@ -350,7 +330,6 @@ fn l_char(lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<LuaString> {
     lua.create_string(bytes)
 }
 
-/// Finds the first occurrence of `pattern` in `s`. Returns nil if not found.
 fn l_find(
     lua: &Lua,
     (s, pattern, init, plain): (String, String, Option<LuaInteger>, Option<bool>),
@@ -393,7 +372,6 @@ fn l_find(
     }
 }
 
-/// Returns an iterator over all non-overlapping matches of pattern in `s`.
 fn l_gmatch(lua: &Lua, (s, pattern): (LuaString, LuaString)) -> LuaResult<Function> {
     let s = s
         .to_str()
@@ -459,8 +437,6 @@ impl LuaReplacement {
     }
 }
 
-/// Replaces every occurrence of `pattern` in `s` with `repl`, returning the new string and the
-/// number of substitutions. A maximum of `n` (default: unlimited) replacements will be performed.
 fn l_gsub(
     lua: &Lua,
     (s, pattern, repl, n): (String, String, Value, Option<LuaInteger>),
@@ -497,8 +473,6 @@ fn l_gsub(
     replace_with(&s, &pattern, |m: &Match| replacement.apply(lua, m), limit)
 }
 
-/// Returns the number of UTF-8 characters in s, or nil plus an error message if s is not a valid
-/// UTF-8 string. When lax is true, invalid sequences are counted leniently instead of failing.
 fn l_len(
     lua: &Lua,
     (s, i, j, lax): (
@@ -553,7 +527,6 @@ fn l_len(
     (result,).into_lua_multi(lua)
 }
 
-/// Matches pattern in `s`, returning the captures (or the whole match).
 fn l_match(
     lua: &Lua,
     (s, pattern, init): (String, String, Option<LuaInteger>),
@@ -574,8 +547,6 @@ fn l_match(
     }
 }
 
-/// Returns the reverse of `s`. Reverses by character, not by byte. When `lax` is true, invalid
-/// sequences are reversed leniently without raising an error.
 fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaString> {
     let bytes = s.as_bytes();
     let strict = !lax.unwrap_or(false);
@@ -601,7 +572,6 @@ fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaStr
     lua.create_string(result)
 }
 
-/// Returns the substring of `s` starting at `start` and ending at `end`.
 fn l_sub(
     _lua: &Lua,
     (s, start, end): (String, LuaInteger, Option<LuaInteger>),
@@ -622,8 +592,6 @@ fn l_sub(
     }
 }
 
-/// Escapes `s` to UTF-8 format (supports %ddd, %{ddd}, %uddd, %u{ddd}, %xhhh, %x{hhh}, and %? for
-/// any other character).
 fn l_escape(_lua: &Lua, s: String) -> LuaResult<String> {
     let mut chars = s.chars().peekable();
     let mut result = String::with_capacity(s.len());
@@ -658,7 +626,7 @@ fn l_escape(_lua: &Lua, s: String) -> LuaResult<String> {
 }
 
 /// Parses either "d+" or "{d+}" into a `char`. `radix` selects the base of digit "d".
-pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> LuaResult<char> {
+fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> LuaResult<char> {
     let braced = chars.next_if_eq(&'{').is_some();
     let mut value: u32 = 0;
     let mut digits = 0;
@@ -692,9 +660,6 @@ pub fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> L
     char::from_u32(value).ok_or_else(|| mlua::Error::runtime("invalid codepoint"))
 }
 
-/// Converts UTF-8 character position `n` to byte position, also returning the code point at the
-/// resulting position. Assumes `s` is valid UTF-8. With one optional argument it is `n`; with two
-/// optional arguments they are `i` (byte position) and `n` (character count after `i`).
 fn l_charpos(
     lua: &Lua,
     (s, i_or_n, n): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
@@ -810,7 +775,6 @@ fn char_pos(bytes: &[u8], n: isize) -> Option<usize> {
     }
 }
 
-/// Inserts substring into s: before the n-th character (default: append).
 fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaString> {
     let mut args = args.into_iter();
     let arg2 = args.next();
@@ -857,8 +821,6 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
     lua.create_string(buf)
 }
 
-/// Deletes a substring from s: from i to j (inclusive), or the last character when neither is
-/// given.
 fn l_remove(
     lua: &Lua,
     (s, i, j): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
@@ -910,8 +872,6 @@ fn next_optional<T: FromLua>(
     }
 }
 
-/// Calculates the display width of `s` (or of a substring) in columns, or of a single code point
-/// when given a number.
 fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
     let mut args = args.into_iter();
 
@@ -981,8 +941,6 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
     }
 }
 
-/// Returns the character index idx at display width in s, plus offset (which column within idx-th
-/// character) and the character's width.
 fn l_widthindex(
     lua: &Lua,
     (s, width, i, j, ambi_width, default_width): (
@@ -1048,8 +1006,6 @@ fn l_widthindex(
     index.into_lua_multi(lua)
 }
 
-/// Finds the byte position where truncation should occur to fit within a display width limit
-/// (negative limit truncates from the back).
 fn l_widthlimit(
     lua: &Lua,
     (s, limit, i, j, ambi_width, default_width): (
@@ -1144,7 +1100,6 @@ fn l_widthlimit(
     (index, width).into_lua_multi(lua)
 }
 
-// Compares a and b without case: -1 if a < b, 0 if equal, 1 if a > b.
 fn l_ncasecmp(_lua: &Lua, (a, b): (LuaString, LuaString)) -> LuaResult<LuaInteger> {
     let a = a
         .to_str()
@@ -1166,13 +1121,10 @@ fn l_ncasecmp(_lua: &Lua, (a, b): (LuaString, LuaString)) -> LuaResult<LuaIntege
     })
 }
 
-/// Returns `true` if `s` is a valid UTF-8 string.
 fn l_isvalid(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
     Ok(s.to_str().is_ok())
 }
 
-/// Replaces invalid UTF-8 byte sequences in `s` with replacement (default: U+FFFD).
-/// Returns the clean string and whether the original string was valid.
 fn l_clean(
     lua: &Lua,
     (s, replacement): (LuaString, Option<LuaString>),
@@ -1222,9 +1174,6 @@ fn l_clean(
     lua.create_string(res).map(|res| (res, false))
 }
 
-/// Returns the byte position position within s of the first invalid UTF-8 byte sequence (1 is the
-/// first byte of the string). If s is a valid UTF-8 string, returns nil. The default for i is 1.
-/// The optional numeric argument i specifies where to start the search and can be negative.
 fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<LuaInteger>)) -> LuaResult<Value> {
     let len = s.as_bytes().len();
     let start = i.map_or(1, |i| {
@@ -1241,8 +1190,6 @@ fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<LuaInteger>)) -> LuaRes
     }
 }
 
-/// Returns whether `s` is in Normalization Form C (NFC).
-/// Raises an error for invalid UTF-8.
 fn l_isnfc(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
     let s = s
         .to_str()
@@ -1250,7 +1197,6 @@ fn l_isnfc(_lua: &Lua, s: LuaString) -> LuaResult<bool> {
     Ok(is_nfc(&s))
 }
 
-/// Normalizes `s` to NFC and returns the normalized string and whether `s` was already normalized.
 fn l_normalize_nfc(lua: &Lua, s: LuaString) -> LuaResult<(LuaString, bool)> {
     let borrowed_str = s
         .to_str()
@@ -1263,8 +1209,6 @@ fn l_normalize_nfc(lua: &Lua, s: LuaString) -> LuaResult<(LuaString, bool)> {
     }
 }
 
-/// Returns an iterator over grapheme clusters of `s`, yielding the inclusive byte range [from, to]
-/// of each cluster.
 fn l_grapheme_indices(
     lua: &Lua,
     (s, i, j): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
@@ -1318,8 +1262,7 @@ fn l_grapheme_indices(
 }
 
 macro_rules! make_case_mapper {
-    ($fn_name:ident, $variant:ident, $description:literal) => {
-        /// Converts `s` to $description. With an integer argument, converts a code point.
+    ($fn_name:ident, $variant:ident) => {
         fn $fn_name(lua: &Lua, s: Value) -> LuaResult<Value> {
             match s {
                 Value::Integer(n) => {
@@ -1353,10 +1296,10 @@ macro_rules! make_case_mapper {
     };
 }
 
-make_case_mapper!(l_lower, simple_lowercase, "lowercase");
-make_case_mapper!(l_upper, simple_uppercase, "uppercase");
-make_case_mapper!(l_title, simple_titlecase, "titlecase");
-make_case_mapper!(l_fold, simple_fold, "folded case");
+make_case_mapper!(l_lower, simple_lowercase);
+make_case_mapper!(l_upper, simple_uppercase);
+make_case_mapper!(l_title, simple_titlecase);
+make_case_mapper!(l_fold, simple_fold);
 
 #[cfg(feature = "module")]
 #[mlua::lua_module]
