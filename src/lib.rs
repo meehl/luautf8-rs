@@ -1005,17 +1005,17 @@ fn l_widthindex(
         .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
         .chars();
 
-    let mut index = 0;
-    let mut width = width as usize;
+    let mut index: LuaInteger = 0;
+    let mut width = width;
     for ch in chars {
         let ch_width = ch_width(ch, ambi_width, default_width);
 
-        if width <= ch_width {
+        if width <= ch_width as LuaInteger {
             return (index + 1, width, ch_width).into_lua_multi(lua);
         }
 
         index += 1;
-        width -= ch_width;
+        width -= ch_width as LuaInteger;
     }
 
     index.into_lua_multi(lua)
