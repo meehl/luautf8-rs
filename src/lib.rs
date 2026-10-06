@@ -1060,6 +1060,14 @@ fn l_widthlimit(
         ));
     }
 
+    if i > j {
+        if limit >= 0 {
+            return (i - 1, limit).into_lua_multi(lua);
+        } else {
+            return (j + 1, limit).into_lua_multi(lua);
+        }
+    }
+
     let start = i - 1;
     let end = j;
     let mut width = limit;
