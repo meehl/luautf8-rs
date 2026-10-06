@@ -34,8 +34,12 @@ use crate::{
     utf8::{char_start, decode_utf8, invalid_codepoint, move_by_chars},
 };
 
-// TODO: pattern depends on lua version
-const CHAR_PATTERN: &[u8] = b"[\0-\x7F\xC2-\xF4][\x80-\xBF]*";
+const CHAR_PATTERN: &[u8] = if cfg!(any(feature = "lua51", feature = "luajit")) {
+    b"[%z\x01-\x7F\xC2-\xF4][\x80-\xBF]*"
+} else {
+    b"[\x00-\x7F\xC2-\xF4][\x80-\xBF]*"
+};
+
 const VERSION: &str = "0.3.0";
 
 /// Creates the module table.
