@@ -1204,6 +1204,9 @@ fn l_invalidoffset(lua: &Lua, (s, i): (LuaString, Option<LuaInteger>)) -> LuaRes
         (if i >= 0 { i } else { len as LuaInteger + i + 1 }).max(1)
     });
     let start = (start - 1) as usize; // translate to 0-based index
+    if start > len {
+        return Ok(mlua::Nil);
+    }
     match std::str::from_utf8(&s.as_bytes()[start..]) {
         Ok(_) => Ok(mlua::Nil),
         // translate to 1-based index and return
