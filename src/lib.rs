@@ -836,19 +836,23 @@ fn l_remove(
     lua: &Lua,
     (s, i, j): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
 ) -> LuaResult<LuaString> {
-    let s = s.as_bytes();
+    let bytes = s.as_bytes();
     let i = i.unwrap_or(-1);
     let j = j.unwrap_or(-1);
 
-    let start = char_pos(&s, i as isize).unwrap_or_else(|| if i > 0 { s.len() } else { 0 });
-    let end = char_pos(&s, j as isize).map_or_else(
-        || if i > 0 { s.len() } else { 0 },
-        |end| next_char_pos(&s[end..]).map_or(s.len(), |offset| end + offset),
+    let start = char_pos(&bytes, i as isize).unwrap_or_else(|| if i > 0 { bytes.len() } else { 0 });
+    let end = char_pos(&bytes, j as isize).map_or_else(
+        || if i > 0 { bytes.len() } else { 0 },
+        |end| next_char_pos(&bytes[end..]).map_or(bytes.len(), |offset| end + offset),
     );
 
-    let mut buf = Vec::with_capacity(s.len());
-    buf.extend_from_slice(&s[..start]);
-    buf.extend_from_slice(&s[end..]);
+    if start > end {
+        return Ok(s);
+    }
+
+    let mut buf = Vec::with_capacity(bytes.len());
+    buf.extend_from_slice(&bytes[..start]);
+    buf.extend_from_slice(&bytes[end..]);
 
     lua.create_string(buf)
 }
