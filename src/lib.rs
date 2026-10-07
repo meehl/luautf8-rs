@@ -779,9 +779,13 @@ fn l_next(
     let index = i.unwrap_or_else(|| if o.is_some() { 1 } else { 0 });
 
     let position = if index == 0 {
-        char_start(&bytes, offset)
+        char_start(&bytes, offset - 1)
     } else {
-        move_by_chars(&bytes, offset.max(1), index)
+        if offset == 0 && index == 1 {
+            Some(0)
+        } else {
+            move_by_chars(&bytes, offset.max(1) - 1, index)
+        }
     };
 
     let Some(position) = position else {

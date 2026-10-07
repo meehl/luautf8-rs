@@ -142,7 +142,7 @@ pub fn char_start(bytes: &[u8], position: usize) -> Option<usize> {
 /// move backward.
 /// Returns `None` if the requested position lies outside the slice.
 pub fn move_by_chars(bytes: &[u8], start: usize, distance: i64) -> Option<usize> {
-    if start >= bytes.len() {
+    if start > bytes.len() {
         return None;
     }
 
