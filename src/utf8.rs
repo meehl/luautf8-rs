@@ -37,6 +37,50 @@ pub fn decode_utf8(bytes: &[u8]) -> Result<(u32, usize), DecodeError> {
     Ok((cp, len))
 }
 
+/// Encodes one code point according to RFC 2279.
+///
+/// NOTE: Allows for code points up to `0x7FFFFFFF`.
+pub fn encode_utf8(cp: u32, out: &mut Vec<u8>) {
+    assert!(cp <= 0x7FFFFFFF);
+
+    match cp {
+        0x0000_0000..=0x0000_007F => {
+            out.push(cp as u8);
+        }
+        0x0000_0080..=0x0000_07FF => {
+            out.push(0xC0 | (cp >> 6) as u8);
+            out.push(0x80 | (cp & 0x3F) as u8);
+        }
+        0x0000_0800..=0x0000_FFFF => {
+            out.push(0xE0 | (cp >> 12) as u8);
+            out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            out.push(0x80 | (cp & 0x3F) as u8);
+        }
+        0x0001_0000..=0x001F_FFFF => {
+            out.push(0xF0 | (cp >> 18) as u8);
+            out.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+            out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            out.push(0x80 | (cp & 0x3F) as u8);
+        }
+        0x0020_0000..=0x03FF_FFFF => {
+            out.push(0xF8 | (cp >> 24) as u8);
+            out.push(0x80 | ((cp >> 18) & 0x3F) as u8);
+            out.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+            out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            out.push(0x80 | (cp & 0x3F) as u8);
+        }
+        0x0400_0000..=0x7FFF_FFFF => {
+            out.push(0xFC | (cp >> 30) as u8);
+            out.push(0x80 | ((cp >> 24) & 0x3F) as u8);
+            out.push(0x80 | ((cp >> 18) & 0x3F) as u8);
+            out.push(0x80 | ((cp >> 12) & 0x3F) as u8);
+            out.push(0x80 | ((cp >> 6) & 0x3F) as u8);
+            out.push(0x80 | (cp & 0x3F) as u8);
+        }
+        _ => unreachable!(),
+    }
+}
+
 pub fn invalid_codepoint(cp: u32) -> bool {
     cp > 0x10FFFF || (0xD800 <= cp && cp <= 0xDFFF)
 }

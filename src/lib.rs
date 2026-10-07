@@ -12,8 +12,6 @@
 mod lua_pattern;
 mod utf8;
 
-use std::{iter::Peekable, str::Chars};
-
 use icu_casemap::CaseMapper;
 use icu_properties::{
     CodePointMapData, CodePointSetData,
@@ -31,7 +29,7 @@ use crate::{
         CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch,
         replace_with,
     },
-    utf8::{char_start, decode_utf8, invalid_codepoint, move_by_chars},
+    utf8::{char_start, decode_utf8, encode_utf8, invalid_codepoint, move_by_chars},
 };
 
 const CHAR_PATTERN: &[u8] = if cfg!(any(feature = "lua51", feature = "luajit")) {
@@ -596,72 +594,121 @@ fn l_sub(
     }
 }
 
-fn l_escape(_lua: &Lua, s: String) -> LuaResult<String> {
-    let mut chars = s.chars().peekable();
-    let mut result = String::with_capacity(s.len());
+fn l_escape(lua: &Lua, s: LuaString) -> LuaResult<LuaString> {
+    let bytes = s.as_bytes();
+    let mut input = &bytes[..];
+    let mut result = Vec::with_capacity(input.len());
 
-    while let Some(ch) = chars.next() {
-        if ch != '%' {
-            result.push(ch);
+    while !input.is_empty() {
+        let (cp, consumed) =
+            decode_utf8(input).map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+
+        let bytes = &input[..consumed];
+        input = &input[consumed..];
+
+        if cp != b'%' as u32 {
+            result.extend_from_slice(bytes);
             continue;
         }
 
-        match chars.peek() {
-            Some(d) if d.is_ascii_digit() || d == &'{' => {
-                result.push(parse_escaped_codepoint(&mut chars, 10)?);
+        match input.first() {
+            None => {
+                return Err(mlua::Error::runtime("unfinished escape"));
             }
-            Some('u' | 'U') => {
-                chars.next();
-                result.push(parse_escaped_codepoint(&mut chars, 10)?);
+
+            Some(b'0'..=b'9' | b'{') => {
+                let cp = parse_escaped_codepoint(&mut input, 10)?;
+                encode_utf8(cp, &mut result);
             }
-            Some('x' | 'X') => {
-                chars.next();
-                result.push(parse_escaped_codepoint(&mut chars, 16)?);
+
+            Some(b'u' | b'U') => {
+                input = &input[1..];
+
+                let cp = parse_escaped_codepoint(&mut input, 10)?;
+                encode_utf8(cp, &mut result);
             }
-            Some(other) => {
-                result.push(*other);
-                chars.next();
+
+            Some(b'x' | b'X') => {
+                input = &input[1..];
+
+                let cp = parse_escaped_codepoint(&mut input, 16)?;
+                encode_utf8(cp, &mut result);
             }
-            None => return Err(mlua::Error::runtime("unfinished escape")),
+
+            Some(_) => {
+                let (_, consumed) = decode_utf8(input)
+                    .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+
+                result.extend_from_slice(&input[..consumed]);
+                input = &input[consumed..];
+            }
         }
     }
 
-    Ok(result)
+    lua.create_string(result)
 }
 
-/// Parses either "d+" or "{d+}" into a `char`. `radix` selects the base of digit "d".
-fn parse_escaped_codepoint(chars: &mut Peekable<Chars<'_>>, radix: u32) -> LuaResult<char> {
-    let braced = chars.next_if_eq(&'{').is_some();
-    let mut value: u32 = 0;
-    let mut digits = 0;
+/// Parses either `d+` or `{d+}` into a `u32`.
+///
+/// `radix` selects the base of the digits.
+fn parse_escaped_codepoint(input: &mut &[u8], radix: u32) -> LuaResult<u32> {
+    let braced = input.first() == Some(&b'{');
+    if braced {
+        *input = &input[1..];
+    }
 
-    loop {
-        match chars.peek() {
-            Some(c) if c.is_digit(radix) => {
-                value = value
-                    .checked_mul(radix)
-                    .and_then(|v| v.checked_add(c.to_digit(radix).expect("c is a digit")))
-                    .ok_or_else(|| mlua::Error::runtime("invalid codepoint"))?;
-                digits += 1;
-                chars.next();
-            }
-            // braced form: only `}` ends the sequence
-            Some('}') if braced => {
-                chars.next();
-                break;
-            }
-            Some(c) if braced => return Err(mlua::Error::runtime(format!("invalid escape '{c}'"))),
-            None if braced => return Err(mlua::Error::runtime("unfinished escape")),
-            // unbraced form: stop at the first non-digit or end
-            _ => break,
+    let mut value = 0u32;
+    let mut digits = 0;
+    let mut closed = !braced;
+
+    while let Some(byte) = input.first() {
+        if braced && byte == &b'}' {
+            *input = &input[1..];
+            closed = true;
+            break;
         }
+
+        let Some(digit) = digit_value(byte) else {
+            if braced {
+                return Err(mlua::Error::runtime(format!("invalid escape '{byte}'")));
+            }
+            break;
+        };
+
+        if digit >= radix {
+            if braced {
+                return Err(mlua::Error::runtime("invalid escape"));
+            }
+            break;
+        }
+
+        value = value
+            .checked_mul(radix)
+            .and_then(|v| v.checked_add(digit))
+            .ok_or_else(|| mlua::Error::runtime("invalid codepoint"))?;
+
+        *input = &input[1..];
+        digits += 1;
     }
 
     if digits == 0 {
         return Err(mlua::Error::runtime("invalid escape: expected digit"));
     }
 
-    char::from_u32(value).ok_or_else(|| mlua::Error::runtime("invalid codepoint"))
+    if !closed {
+        return Err(mlua::Error::runtime("unfinished escape"));
+    }
+
+    Ok(value)
+}
+
+fn digit_value(byte: &u8) -> Option<u32> {
+    match byte {
+        b'0'..=b'9' => Some((byte - b'0') as u32),
+        b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
+        b'A'..=b'F' => Some((byte - b'A' + 10) as u32),
+        _ => None,
+    }
 }
 
 fn l_charpos(
