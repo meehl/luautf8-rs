@@ -347,4 +347,40 @@ mod tests {
         assert_eq!(output, "[2]");
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn replace_with_lastmatch_handling() {
+        let input = "abc";
+        let pattern = Pattern::parse("b?").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some("X".to_owned())), None).unwrap();
+
+        assert_eq!(output, "XaXcX");
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn replace_with_start_anchor_applies_only_once() {
+        let input = "abc";
+        let pattern = Pattern::parse("^").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some("X".to_owned())), None).unwrap();
+
+        assert_eq!(output, "Xabc");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn replace_with_anchored_pattern_only_replaces_at_start() {
+        let input = "abac";
+        let pattern = Pattern::parse("^a").unwrap();
+
+        let (output, count) =
+            replace_with(input, &pattern, |_| Ok::<_, ()>(Some("X".to_owned())), None).unwrap();
+
+        assert_eq!(output, "Xbac");
+        assert_eq!(count, 1);
+    }
 }

@@ -10,7 +10,7 @@ pub fn find<'s>(input: &'s str, pattern: &Pattern, start: Option<usize>) -> Opti
         None => Position::default(),
     };
 
-    find_from_position(input, pattern, start)
+    find_from_position(input, pattern, start, AnchorMode::Relative)
 }
 
 /// Returns an iterator over all matches.
@@ -114,7 +114,7 @@ pub struct Matches<'s, 'p> {
     input: &'s str,
     pattern: &'p Pattern,
     next_pos: Position,
-    done: bool,
+    last_match_end: Option<Position>,
 }
 
 impl<'s, 'p> Matches<'s, 'p> {
@@ -123,7 +123,7 @@ impl<'s, 'p> Matches<'s, 'p> {
             input,
             pattern,
             next_pos: Position::default(),
-            done: false,
+            last_match_end: None,
         }
     }
 }
@@ -132,24 +132,32 @@ impl<'s, 'p> Iterator for Matches<'s, 'p> {
     type Item = Match<'s>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
+        loop {
+            let matched = find_from_position(
+                self.input,
+                self.pattern,
+                self.next_pos,
+                AnchorMode::Absolute,
+            )?;
 
-        let matched = find_from_position(self.input, self.pattern, self.next_pos)?;
+            // this candidate was already represented by the previous accepted match
+            if self.last_match_end == Some(matched.end) {
+                // At end of input there is no later position to search
+                if matched.start.byte_index == self.input.len() {
+                    return None;
+                }
 
-        if matched.start.byte_index == matched.end.byte_index {
-            if matched.end.byte_index == self.input.len() {
-                self.done = true;
-            } else {
-                // empty matches must advance by at least one character
-                self.next_pos = advance(self.input, matched.end);
+                // otherwise continue searching one character later
+                self.next_pos = advance(self.input, matched.start);
+                continue;
             }
-        } else {
-            self.next_pos = matched.end;
-        }
 
-        Some(matched)
+            // accept the match
+            self.last_match_end = Some(matched.end);
+            self.next_pos = matched.end;
+
+            return Some(matched);
+        }
     }
 }
 
@@ -158,7 +166,7 @@ pub struct GMatches {
     input: String,
     pattern: Pattern,
     next_pos: Position,
-    done: bool,
+    last_match_end: Option<Position>,
 }
 
 impl GMatches {
@@ -167,29 +175,37 @@ impl GMatches {
             input,
             pattern,
             next_pos: Position::default(),
-            done: false,
+            last_match_end: None,
         }
     }
 
     pub fn next(&mut self) -> Option<Match<'_>> {
-        if self.done {
-            return None;
-        }
+        loop {
+            let matched = find_from_position(
+                &self.input,
+                &self.pattern,
+                self.next_pos,
+                AnchorMode::Absolute,
+            )?;
 
-        let matched = find_from_position(&self.input, &self.pattern, self.next_pos)?;
+            // this candidate was already represented by the previous accepted match
+            if self.last_match_end == Some(matched.end) {
+                // At end of input there is no later position to search
+                if matched.start.byte_index == self.input.len() {
+                    return None;
+                }
 
-        if matched.start.byte_index == matched.end.byte_index {
-            if matched.end.byte_index == self.input.len() {
-                self.done = true;
-            } else {
-                // empty matches must advance by at least one character
-                self.next_pos = advance(&self.input, matched.end);
+                // otherwise continue searching one character later.
+                self.next_pos = advance(&self.input, matched.start);
+                continue;
             }
-        } else {
-            self.next_pos = matched.end;
-        }
 
-        Some(matched)
+            // accept the match
+            self.last_match_end = Some(matched.end);
+            self.next_pos = matched.end;
+
+            return Some(matched);
+        }
     }
 }
 
@@ -209,15 +225,28 @@ struct MatchContext<'s, 'p> {
     captures: Vec<Option<CaptureSlot>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum AnchorMode {
+    /// `^` is relative to the requested search position.
+    Relative,
+    /// `^` is relative to the beginning of the actual input.
+    Absolute,
+}
+
 /// Searches for match starting at given position.
-fn find_from_position<'s>(input: &'s str, pattern: &Pattern, start: Position) -> Option<Match<'s>> {
+fn find_from_position<'s>(
+    input: &'s str,
+    pattern: &Pattern,
+    start: Position,
+    anchor_mode: AnchorMode,
+) -> Option<Match<'s>> {
     let mut ctx = MatchContext {
         input,
         pattern,
         captures: vec![None; pattern.capture_count()],
     };
 
-    let (start, end) = find_pattern(&mut ctx, start)?;
+    let (start, end) = find_pattern(&mut ctx, start, anchor_mode)?;
 
     let captures = ctx
         .captures
@@ -244,7 +273,11 @@ fn find_from_position<'s>(input: &'s str, pattern: &Pattern, start: Position) ->
 
 /// Slides the pattern over the input and tries to find a match.
 /// Returns the start and end positions of the match if successful.
-fn find_pattern(ctx: &mut MatchContext, start: Position) -> Option<(Position, Position)> {
+fn find_pattern(
+    ctx: &mut MatchContext,
+    start: Position,
+    anchor_mode: AnchorMode,
+) -> Option<(Position, Position)> {
     let anchored = ctx.pattern.has_start_anchor();
     let pattern_index = if anchored { 1 } else { 0 };
 
@@ -253,6 +286,11 @@ fn find_pattern(ctx: &mut MatchContext, start: Position) -> Option<(Position, Po
     loop {
         // each attempted starting position needs a clean capture state
         ctx.captures.fill(None);
+
+        // an absolutely anchored pattern may only match at the actual beginning of the input
+        if anchored && matches!(anchor_mode, AnchorMode::Absolute) && pos.byte_index != 0 {
+            return None;
+        }
 
         if let Some(end) = do_match(ctx, pos, pattern_index) {
             return Some((pos, end));
@@ -1639,5 +1677,28 @@ mod tests {
         // a* initially consumes all three 'a' characters but has to backtrack to match
         // the remainder.
         assert_eq!(matches[0].capture(0), Some(CaptureValue::Position(2)));
+    }
+
+    #[test]
+    fn find_all_lastmatch_handling() {
+        let input = "abc";
+        let pattern = Pattern::parse("b?").unwrap();
+
+        let matches: Vec<_> = find_all(input, &pattern).collect();
+        dbg!(&matches);
+
+        assert_eq!(matches.len(), 3);
+
+        assert_eq!(matches[0].as_str(), "");
+        assert_eq!(matches[0].start(), 0);
+        assert_eq!(matches[0].end(), 0);
+
+        assert_eq!(matches[1].as_str(), "b");
+        assert_eq!(matches[1].start(), 1);
+        assert_eq!(matches[1].end(), 2);
+
+        assert_eq!(matches[2].as_str(), "");
+        assert_eq!(matches[2].start(), 3);
+        assert_eq!(matches[2].end(), 3);
     }
 }
