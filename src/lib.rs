@@ -793,7 +793,7 @@ fn l_next(
         Err(_) => 0,
     };
 
-    (cp, position + 1).into_lua_multi(lua)
+    (position + 1, cp).into_lua_multi(lua)
 }
 
 fn next_char_pos(bytes: &[u8]) -> Option<usize> {
