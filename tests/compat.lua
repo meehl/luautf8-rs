@@ -974,6 +974,13 @@ do
   -- braced escapes accept only digits valid for their radix
   raises(function() utf8.escape("%{1a1}") end)
   raises(function() utf8.escape("%x{xyz}") end)
+
+  -- raises error on invalid utf8
+  raises(function() utf8.escape("\xFF") end) -- invalid leading byte
+  raises(function() utf8.escape("\xC0\xAF") end) -- overlong
+  -- but accepts surrogates and code points above 0x10FFFF
+  eq(utf8.escape("%x{41}\xED\xA0\x80"), "A\xED\xA0\x80")
+  eq(utf8.escape("\xF8\x88\x80\x80\x80"), "\xF8\x88\x80\x80\x80")
 end
 
 ---
