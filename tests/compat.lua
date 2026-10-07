@@ -621,6 +621,10 @@ do
   eq(r, "55")
   eq(n, 2)
 
+  r, n = utf8.gsub("aé", "(.)", { a = 1, ["é"] = 2.2 })
+  eq(r, "12.2")
+  eq(n, 2)
+
   -- booleans (other than false/nil) are rejected
   raises(function()
     utf8.gsub("ab", ".", function()

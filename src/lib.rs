@@ -413,6 +413,8 @@ impl LuaReplacement {
                 let value = table.get(key)?;
                 match value {
                     Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+                    Value::Integer(integer) => Ok(Some(integer.to_string())),
+                    Value::Number(number) => Ok(Some(number.to_string())),
                     Value::Nil | Value::Boolean(false) => Ok(None),
                     other => Err(mlua::Error::runtime(format!(
                         "invalid replacement value (a {})",
@@ -426,6 +428,8 @@ impl LuaReplacement {
                 let value = function.call(args)?;
                 match value {
                     Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+                    Value::Integer(integer) => Ok(Some(integer.to_string())),
+                    Value::Number(number) => Ok(Some(number.to_string())),
                     Value::Nil | Value::Boolean(false) => Ok(None),
                     other => Err(mlua::Error::runtime(format!(
                         "invalid replacement value (a {})",
