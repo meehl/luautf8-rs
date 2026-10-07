@@ -1221,6 +1221,9 @@ do
   eq(utf8.insert(S, -2, "X"), "Aé中X🙂B")
   eq(utf8.insert(S, -5, "X"), "XAé中🙂B")
 
+  -- missing third argument
+  raises(function() utf8.insert(S, 1) end)
+
   -- out-of-range.
   raises(function() utf8.insert(S, 100, "X") end)
   raises(function() utf8.insert(S, -100, "X") end)
@@ -1233,6 +1236,8 @@ do
 
   -- a numeric insertion value is converted to its string form
   eq(utf8.insert("abc", 1, 5), "5abc")
+  eq(utf8.insert("abc", 1, 42), "42abc")
+  eq(utf8.insert("abc", 1, 3.14), "3.14abc")
 end
 
 ---

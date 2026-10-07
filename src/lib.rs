@@ -839,7 +839,9 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
         _ => (None, arg2, 2),
     };
     let subs = match subs_arg {
-        Some(Value::String(s)) => s.as_bytes(),
+        Some(Value::String(string)) => string.as_bytes().to_vec(),
+        Some(Value::Integer(integer)) => integer.to_string().into_bytes(),
+        Some(Value::Number(number)) => number.to_string().into_bytes(),
         Some(other) => {
             return Err(bad_argument(
                 "insert",
