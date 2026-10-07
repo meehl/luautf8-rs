@@ -185,10 +185,10 @@ fn l_offset(
     let end = s
         .get(start..)
         .and_then(|rest| rest.chars().next())
-        .map_or(start, |c| start + c.len_utf8());
+        .map_or(start + 1, |c| start + c.len_utf8());
 
     // translate back to 1-based indices and return
-    (start + 1, end + 1).into_lua_multi(lua)
+    (start + 1, end).into_lua_multi(lua)
 }
 
 fn l_codepoint(
