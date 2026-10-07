@@ -364,7 +364,7 @@ fn l_find(
                 ];
                 Ok(MultiValue::from_iter(
                     pos.into_iter()
-                        .chain(m.values().map(|c| capture_value_to_lua(lua, c))),
+                        .chain(m.captures().map(|c| capture_value_to_lua(lua, c))),
                 ))
             }
             None => (mlua::Value::Nil,).into_lua_multi(lua),
