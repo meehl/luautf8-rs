@@ -337,7 +337,7 @@ fn l_find(
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
     let start_byte = match char_pos(s.as_bytes(), init as isize) {
         Some(start) => start,
-        None if init <= 0 => 1,
+        None if init <= 0 => 0,
         None => return (mlua::Value::Nil,).into_lua_multi(lua),
     };
 
@@ -541,7 +541,7 @@ fn l_match(
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
     let start_byte = match char_pos(s.as_bytes(), init as isize) {
         Some(start) => start,
-        None if init <= 0 => 1,
+        None if init <= 0 => 0,
         None => return (mlua::Value::Nil,).into_lua_multi(lua),
     };
 
