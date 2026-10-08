@@ -238,12 +238,13 @@ do
   eq(utf8.len(S, 1, 9), 4)
   eq(utf8.len(S, -11, -5), 4)
 
-  -- invalid UTF-8
+  -- invalid UTF-8/code points
   local bad1 = "\x80"
   local bad2 = "\xC0\x80"
   local bad3 = "\xE2\x28\xA1"
   local bad4 = "\xF0\x28\x8C\xBC"
   local bad5 = "\xED\xA0\x80"
+  local bad6 = "\xF8\x88\x80\x80\x80"
 
   local n, p = utf8.len(bad1)
   eq(n, nil)
@@ -265,12 +266,17 @@ do
   eq(n, nil)
   eq(p, 1)
 
+  n, p = utf8.len(bad6)
+  eq(n, nil)
+  eq(p, 1)
+
   -- lax mode
   check(utf8.len(bad1, nil, nil, true) ~= nil, "len should accept invalid byte in lax mode")
   check(utf8.len(bad2, nil, nil, true) ~= nil, "len should accept invalid byte in lax mode")
   check(utf8.len(bad3, nil, nil, true) ~= nil, "len should accept invalid byte in lax mode")
   check(utf8.len(bad4, nil, nil, true) ~= nil, "len should accept invalid byte in lax mode")
   check(utf8.len(bad5, nil, nil, true) ~= nil, "len should accept invalid byte in lax mode")
+  check(utf8.len("a" .. bad6, nil, nil, true) == 2, "len should accept invalid byte in lax mode")
 
   -- an end beyond the last byte is rejected.
   raises(function() utf8.len(S, 2, 100) end)

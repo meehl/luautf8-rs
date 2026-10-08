@@ -109,7 +109,7 @@ fn previous_char_position(bytes: &[u8], position: usize) -> Option<usize> {
 
 /// Returns the byte position of the encoded codepoint immediately after `position`.
 #[inline]
-fn next_char_position(bytes: &[u8], position: usize) -> Option<usize> {
+pub fn next_char_position(bytes: &[u8], position: usize) -> Option<usize> {
     if position >= bytes.len() {
         return None;
     }
@@ -120,7 +120,7 @@ fn next_char_position(bytes: &[u8], position: usize) -> Option<usize> {
         position += 1;
     }
 
-    (position < bytes.len()).then_some(position)
+    (position <= bytes.len()).then_some(position)
 }
 
 /// Returns the start of the encoded code point containing `position`.

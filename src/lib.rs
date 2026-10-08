@@ -29,7 +29,9 @@ use crate::{
         CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch,
         replace_with,
     },
-    utf8::{char_start, decode_utf8, encode_utf8, invalid_codepoint, move_by_chars},
+    utf8::{
+        char_start, decode_utf8, encode_utf8, invalid_codepoint, move_by_chars, next_char_position,
+    },
 };
 
 const CHAR_PATTERN: &[u8] = if cfg!(any(feature = "lua51", feature = "luajit")) {
@@ -486,7 +488,7 @@ fn l_len(
 ) -> LuaResult<MultiValue> {
     let bytes = s.as_bytes();
     let len = bytes.len();
-    let strict = !lax.unwrap_or(false);
+    let lax = lax.unwrap_or(false);
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
 
@@ -511,18 +513,21 @@ fn l_len(
 
     let mut pos = start;
     let mut result = 0;
-    for chunk in bytes[start..end].utf8_chunks() {
-        for ch in chunk.valid().chars() {
+    while pos < end {
+        if lax {
+            let Some(next_pos) = next_char_position(&bytes, pos) else {
+                break;
+            };
             result += 1;
-            pos += ch.len_utf8();
-        }
-        let invalid = chunk.invalid();
-        if !invalid.is_empty() {
-            if strict {
-                return (mlua::Nil, pos + 1).into_lua_multi(lua);
-            }
-            result += 1;
-            pos += invalid.len();
+            pos = next_pos;
+        } else {
+            match decode_utf8(&bytes[pos..]) {
+                Ok((cp, consumed)) if !invalid_codepoint(cp) => {
+                    result += 1;
+                    pos += consumed;
+                }
+                _ => return (mlua::Nil, pos + 1).into_lua_multi(lua),
+            };
         }
     }
 
