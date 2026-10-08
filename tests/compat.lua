@@ -92,6 +92,7 @@ do
   eq(utf8.byte(S, 3), 0x4E2D)
   eq(utf8.byte(S, 4), 0x1F642)
   eq(utf8.byte(S, 5), 0x42)
+  eq(utf8.byte(S, 6), nil)
 
   -- zero and negative character indices
   eq(utf8.byte(S, 0), nil)
@@ -134,6 +135,20 @@ do
   eq(select("#", utf8.byte(S, 3, 2)), 0)
   eq(select("#", utf8.byte(S, 100, 200)), 0)
   eq(select("#", utf8.byte(S, -100, -200)), 0)
+
+  -- range endpoints clamp to the valid character range
+  assert_array({ utf8.byte(S, -100, 100) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  assert_array({ utf8.byte(S, 2, 100) }, { 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  assert_array({ utf8.byte(S, -2, 100) }, { 0x1F642, 0x42 })
+  assert_array({ utf8.byte(S, 0, -1) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  eq(select("#", utf8.byte(S, 100, 2)), 0)
+  eq(select("#", utf8.byte(S, 100, -2)), 0)
+  eq(select("#", utf8.byte(S, 6, 5)), 0)
+  eq(select("#", utf8.byte(S, -6, -7)), 0)
+  eq(select("#", utf8.byte(S, 7, 7)), 0)
+  eq(select("#", utf8.byte(S, -7, -7)), 0)
+  eq(select("#", utf8.byte(S, 1, 0)), 0)
+  eq(select("#", utf8.byte(S, 0, 0)), 0)
 
   -- NUL bytes survive a byte -> char round trip.
   local nul = "\0x"
@@ -197,6 +212,8 @@ do
   eq(utf8.len(S, -1, -1), 1)
   eq(utf8.len(S, -5, -1), 2)
   eq(utf8.len(S, -11, -1), 5)
+  eq(utf8.len(S, 1, -1), 5)
+  eq(utf8.len(S, -5, -5), 1)
 
   -- zero is invalid as a byte position
   raises(function() utf8.len(S, 0) end)
@@ -210,6 +227,16 @@ do
   r, e = utf8.len(S, 5, 10)
   eq(r, nil)
   eq(e, 5)
+
+  r, e = utf8.len(S, -6, -1)
+  eq(r, nil)
+  eq(e, 6)
+
+  -- end in the middle of a UTF-8 sequence
+  eq(utf8.len(S, 1, 7), 4)
+  eq(utf8.len(S, 1, 8), 4)
+  eq(utf8.len(S, 1, 9), 4)
+  eq(utf8.len(S, -11, -5), 4)
 
   -- invalid UTF-8
   local bad1 = "\x80"
@@ -248,6 +275,38 @@ do
   -- an end beyond the last byte is rejected.
   raises(function() utf8.len(S, 2, 100) end)
   raises(function() utf8.len(S, 12, 12) end)
+
+  -- every byte position as the initial index
+  local len_expected = {
+    [-11] = 5, [-10] = 4, [-8] = 3, [-5] = 2, [-1] = 1,
+    [1] = 5, [2] = 4, [4] = 3, [7] = 2, [11] = 1, [12] = 0,
+  }
+  for i = -11, 12 do
+    if len_expected[i] ~= nil then
+      eq(utf8.len(S, i), len_expected[i], "utf8.len initial byte " .. i)
+    end
+  end
+
+  -- positions that start in the middle of a sequence report the bad offset
+  local len_mid = {
+    [-9] = 3, [-7] = 5, [-6] = 6, [-4] = 8, [-3] = 9, [-2] = 10,
+    [3] = 3, [5] = 5, [6] = 6, [8] = 8, [9] = 9, [10] = 10,
+  }
+  for i, pos in pairs(len_mid) do
+    n, e = utf8.len(S, i)
+    eq(n, nil, "utf8.len mid-sequence " .. i)
+    eq(e, pos, "utf8.len mid-sequence offset " .. i)
+  end
+
+  -- zero and positions beyond either end are rejected
+  raises(function() utf8.len(S, 0) end)
+  raises(function() utf8.len(S, -12) end)
+  raises(function() utf8.len(S, -13) end)
+  raises(function() utf8.len(S, 13) end)
+  raises(function() utf8.len(S, 1, 12) end)
+  raises(function() utf8.len(S, 1, 13) end)
+  raises(function() utf8.len(S, -1, 12) end)
+  raises(function() utf8.len(S, -12, -1) end)
 end
 
 ---
@@ -256,12 +315,29 @@ end
 do
   eq(utf8.sub(S, 1), S)
 
-  eq(utf8.sub(S, 1, 1), A)
-  eq(utf8.sub(S, 2, 2), E_ACUTE)
-  eq(utf8.sub(S, 3, 3), CJK)
-  eq(utf8.sub(S, 4, 4), EMOJI)
-  eq(utf8.sub(S, 5, 5), B)
+  -- single index
+  local sub_expected = {
+    [-6] = EMPTY,
+    [-5] = A,
+    [-4] = E_ACUTE,
+    [-3] = CJK,
+    [-2] = EMOJI,
+    [-1] = B,
+    [0] = EMPTY,
+    [1] = A,
+    [2] = E_ACUTE,
+    [3] = CJK,
+    [4] = EMOJI,
+    [5] = B,
+    [6] = EMPTY,
+  }
 
+  for i = -6, 6 do
+    eq(utf8.sub(S, i, i), sub_expected[i],
+      "utf8.sub single-index boundary " .. i)
+  end
+
+  -- ranges
   eq(utf8.sub(S, 1, 5), S)
   eq(utf8.sub(S, 2, 4), "é中🙂")
   eq(utf8.sub(S, 3, 5), "中🙂B")
@@ -288,26 +364,17 @@ do
   eq(utf8.sub(S, 0), S)
   eq(utf8.sub(S, 1, 0), EMPTY)
 
-  local sub_expected = {
-    [-6] = "",
-    [-5] = "A",
-    [-4] = "é",
-    [-3] = "中",
-    [-2] = "🙂",
-    [-1] = "B",
-    [0] = "",
-    [1] = "A",
-    [2] = "é",
-    [3] = "中",
-    [4] = "🙂",
-    [5] = "B",
-    [6] = "",
-  }
+  -- two out-of-range indices clamp independently
+  eq(utf8.sub(S, -6, -5), A)
+  eq(utf8.sub(S, -100, -3), "Aé中")
+  eq(utf8.sub(S, -3, 100), "中🙂B")
+  eq(utf8.sub(S, 6, -6), EMPTY)
+  eq(utf8.sub(S, 7, -7), EMPTY)
+  eq(utf8.sub(S, 0, 1), A)
 
-  for i = -6, 6 do
-    eq(utf8.sub(S, i, i), sub_expected[i],
-      "utf8.sub single-index boundary " .. i)
-  end
+  eq(utf8.sub(EMPTY, 0, 0), EMPTY)
+  eq(utf8.sub(EMPTY, -100, 100), EMPTY)
+  eq(utf8.sub(EMPTY, 100, -100), EMPTY)
 end
 
 ---
@@ -408,10 +475,6 @@ do
   eq(a, 2)
   eq(b, 2)
 
-  a, b = utf8.find(S, ".", 2)
-  eq(a, 2)
-  eq(b, 2)
-
   -- plain mode
   a, b = utf8.find("a.b", ".", 1, true)
   eq(a, 2)
@@ -435,6 +498,91 @@ do
 
   -- rejects malformed pattern
   raises(function() utf8.find("abc", "[") end)
+
+  -- out-of-range inits clamp towards the start for negative values
+  a, b = utf8.find(S, A, 100)
+  eq(a, nil)
+  eq(b, nil)
+
+  a, b = utf8.find(S, A, -100)
+  eq(a, 1)
+  eq(b, 1)
+
+  a, b = utf8.find(S, B, 100)
+  eq(a, nil)
+  eq(b, nil)
+
+  a, b = utf8.find(S, B, -100)
+  eq(a, 5)
+  eq(b, 5)
+
+  -- plain search honors init as well
+  a, b = utf8.find(S, B, -1, true)
+  eq(a, 5)
+  eq(b, 5)
+
+  a, b = utf8.find(S, A, 2, true)
+  eq(a, nil)
+  eq(b, nil)
+
+  a, b = utf8.find(S, A, 0, true)
+  eq(a, 1)
+  eq(b, 1)
+
+  -- the empty pattern reports the init and the character before it
+  a, b = utf8.find(S, "", 6)
+  eq(a, 6)
+  eq(b, 5)
+
+  a, b = utf8.find(S, "", 7)
+  eq(a, nil)
+  eq(b, nil)
+
+  a, b = utf8.find(S, "", -1)
+  eq(a, 5)
+  eq(b, 4)
+
+  -- an anchor matches at the init position
+  a, b = utf8.find(S, "^B", 5)
+  eq(a, 5)
+  eq(b, 5)
+
+  a, b = utf8.find(S, "^B", 6)
+  eq(a, nil)
+  eq(b, nil)
+
+  a, b = utf8.find(S, "^A", -5)
+  eq(a, 1)
+  eq(b, 1)
+
+  -- literal and plain searches clamp negative inits to the start
+  local find_cjk = {
+    [-7] = 3, [-6] = 3, [-5] = 3, [-4] = 3, [-3] = 3,
+    [-2] = nil, [-1] = nil, [0] = 3, [1] = 3, [2] = 3, [3] = 3,
+    [4] = nil, [5] = nil, [6] = nil, [7] = nil,
+  }
+  for init = -7, 7 do
+    a, b = utf8.find(S, CJK, init)
+    eq(a, find_cjk[init], "find literal init " .. init)
+
+    a, b = utf8.find(S, CJK, init, true)
+    eq(a, find_cjk[init], "find plain init " .. init)
+  end
+
+  -- pattern searches for every in-range init
+  local find_dot = {
+    [-5] = 1, [-4] = 2, [-3] = 3, [-2] = 4, [-1] = 5,
+    [0] = 1, [1] = 1, [2] = 2, [3] = 3, [4] = 4, [5] = 5,
+  }
+  for init = -5, 5 do
+    a, b = utf8.find(S, ".", init)
+    eq(a, find_dot[init], "find pattern init " .. init)
+    eq(b, find_dot[init], "find pattern end " .. init)
+  end
+
+  a, b = utf8.find(S, ".", 6)
+  eq(a, nil)
+  eq(b, nil)
 end
 
 ---
@@ -483,6 +631,23 @@ do
   -- rejects malformed pattern
   raises(function() utf8.match("abc", "[") end)
   raises(function() utf8.match("abc", "a)") end)
+
+  -- every negative init clamps to the first character
+  eq(utf8.match(S, "(.)", -6), A)
+  eq(utf8.match(S, "(.)", -5), A)
+  eq(utf8.match(S, "(.)", -4), E_ACUTE)
+  eq(utf8.match(S, "(.)", -3), CJK)
+  eq(utf8.match(S, "(.)", -1), B)
+  eq(utf8.match(S, "(.)", 100), nil)
+  eq(utf8.match(S, "(.)", -100), A)
+
+  -- a position capture at the end still matches
+  eq(utf8.match(S, "()", 6), 6)
+  eq(utf8.match(S, "()", 7), nil)
+
+  -- an anchor matches at the init position
+  eq(utf8.match(S, "^B", 5), B)
+  eq(utf8.match(S, "^B", 1), nil)
 end
 
 ---
@@ -631,6 +796,23 @@ do
       return true
     end)
   end)
+
+  -- replacement counts are clamped to the number of matches
+  r, n = utf8.gsub(S, ".", "x", 4)
+  eq(r, "xxxxB")
+  eq(n, 4)
+
+  r, n = utf8.gsub(S, ".", "x", 5)
+  eq(r, "xxxxx")
+  eq(n, 5)
+
+  r, n = utf8.gsub(S, ".", "x", 100)
+  eq(r, "xxxxx")
+  eq(n, 5)
+
+  r, n = utf8.gsub(S, ".", "x", -2)
+  eq(r, S)
+  eq(n, 0)
 end
 
 ---
@@ -777,6 +959,8 @@ do
   eq(utf8.offset(S, 4), 7)
   eq(utf8.offset(S, 5), 11)
   eq(utf8.offset(S, 6), 12)
+
+  -- positive n past the last character is nil
   eq(utf8.offset(S, 7), nil)
 
   -- negative n from the end
@@ -793,7 +977,6 @@ do
   eq(utf8.offset(S, 1, 4), 4)
   eq(utf8.offset(S, 1, 7), 7)
   eq(utf8.offset(S, 1, 11), 11)
-  eq(utf8.offset(S, 1, 12), 12)
 
   eq(utf8.offset(S, 1, -1), 11)
   eq(utf8.offset(S, 4, -1), nil)
@@ -829,6 +1012,22 @@ do
   assert_array({ utf8.offset(S, 0, 3) }, { 2, 3 })
   assert_array({ utf8.offset(S, 0, 5) }, { 4, 6 })
   assert_array({ utf8.offset(S, 0, 11) }, { 11, 11 })
+
+  -- byte position len+1 (one past the end) is accepted
+  assert_array({ utf8.offset(S, 0, 12) }, { 12, 12 })
+  assert_array({ utf8.offset(S, 1, 12) }, { 12, 12 })
+
+  -- negative byte positions start the walk from the end
+  eq(utf8.offset(S, 1, -11), 1)
+  assert_array({ utf8.offset(S, 2, -11) }, { 2, 3 })
+  eq(utf8.offset(S, -4, -1), 1)
+  eq(utf8.offset(S, -5, -1), nil)
+
+  -- byte positions outside [-len, len+1] are rejected
+  raises(function() utf8.offset(S, 1, -12) end)
+  raises(function() utf8.offset(S, 0, 13) end)
+  raises(function() utf8.offset(S, 0, -12) end)
+  raises(function() utf8.offset(S, 0, 0) end)
 end
 
 ---
@@ -891,6 +1090,17 @@ do
   raises(function() utf8.codepoint(utf8.char(0xD800), 1, 1) end)
   raises(function() utf8.codepoint("\xC0\x80", 1, 1, true) end)
   raises(function() utf8.codepoint("\xF0\x80\x80\x80", 1, 1, true) end)
+
+  -- negative byte range
+  assert_array({ utf8.codepoint(S, -11, -5) }, { 0x41, 0xE9, 0x4E2D, 0x1F642 })
+
+  -- an empty range at the start
+  eq(select("#", utf8.codepoint(S, 1, 0)), 0)
+
+  -- out-of-range byte positions are rejected
+  raises(function() utf8.codepoint(S, -12) end)
+  raises(function() utf8.codepoint(S, 13) end)
+  raises(function() utf8.codepoint(S, -1, 12) end)
 end
 
 ---
@@ -1088,6 +1298,58 @@ do
   p, cp = utf8.charpos(S, 1, 100)
   eq(p, nil)
   eq(cp, nil)
+
+  -- every negative character position, and positions beyond the end
+  p, cp = utf8.charpos(S, -3)
+  eq(p, 4)
+  eq(cp, 0x4E2D)
+
+  p, cp = utf8.charpos(S, -4)
+  eq(p, 2)
+  eq(cp, 0xE9)
+
+  p, cp = utf8.charpos(S, -6)
+  eq(p, nil)
+  eq(cp, nil)
+
+  p, cp = utf8.charpos(S, 7)
+  eq(p, nil)
+  eq(cp, nil)
+
+  -- out-of-range n with an explicit byte position
+  p, cp = utf8.charpos(S, 1, 6)
+  eq(p, nil)
+  eq(cp, nil)
+
+  p, cp = utf8.charpos(S, 1, -1)
+  eq(p, nil)
+  eq(cp, nil)
+
+  p, cp = utf8.charpos(S, 11, 1)
+  eq(p, nil)
+  eq(cp, nil)
+
+  -- byte positions past the end still walk backwards
+  p, cp = utf8.charpos(S, 12, -1)
+  eq(p, 11)
+  eq(cp, 0x42)
+
+  p, cp = utf8.charpos(S, 12, -5)
+  eq(p, 1)
+  eq(cp, 0x41)
+
+  p, cp = utf8.charpos(S, 12, 0)
+  eq(p, nil)
+  eq(cp, nil)
+
+  -- zero and negative byte positions clamp to the first byte
+  p, cp = utf8.charpos(S, 0, 1)
+  eq(p, 2)
+  eq(cp, 0xE9)
+
+  p, cp = utf8.charpos(S, -11, 1)
+  eq(p, 2)
+  eq(cp, 0xE9)
 end
 
 ---
@@ -1202,6 +1464,37 @@ do
     { 7,  0x1F642 },
     { 11, 0x42 },
   })
+
+  -- negative byte offsets clamp to the start
+  p, cp = utf8.next(S, -12)
+  eq(p, 1)
+  eq(cp, 0x41)
+
+  p, cp = utf8.next(S, -13)
+  eq(p, 1)
+  eq(cp, 0x41)
+
+  p, cp = utf8.next(S, 13)
+  eq(p, nil)
+  eq(cp, nil)
+
+  -- n == 0 from byte position 0 returns position 0
+  p, cp = utf8.next(S, 0, 0)
+  eq(p, 0)
+  eq(cp, 0)
+
+  -- n steps from inside a multibyte sequence
+  p, cp = utf8.next(S, 3, -1)
+  eq(p, 2)
+  eq(cp, 0xE9)
+
+  p, cp = utf8.next(S, -1, -1)
+  eq(p, 7)
+  eq(cp, 0x1F642)
+
+  p, cp = utf8.next(S, 1, -1)
+  eq(p, nil)
+  eq(cp, nil)
 end
 
 ---
@@ -1238,6 +1531,11 @@ do
   eq(utf8.insert("abc", 1, 5), "5abc")
   eq(utf8.insert("abc", 1, 42), "42abc")
   eq(utf8.insert("abc", 1, 3.14), "3.14abc")
+
+  -- one before the first character (and one past the end) is invalid
+  raises(function() utf8.insert(S, -6, "X") end)
+  raises(function() utf8.insert(S, -7, "X") end)
+  raises(function() utf8.insert(S, 7, "X") end)
 end
 
 ---
@@ -1245,10 +1543,17 @@ end
 -- utf8.remove
 do
   eq(utf8.remove(S), "Aé中🙂")
-  eq(utf8.remove(S, 1), "")
-  eq(utf8.remove(S, 2), A)
-  eq(utf8.remove(S, 3), "Aé")
-  eq(utf8.remove(S, 5), "Aé中🙂")
+
+  -- single index removes from that character through the end
+  local remove_from = {
+    [-7] = EMPTY, [-6] = EMPTY, [-5] = EMPTY,
+    [-4] = A, [-3] = "Aé", [-2] = "Aé中", [-1] = "Aé中🙂",
+    [0] = EMPTY, [1] = EMPTY, [2] = A, [3] = "Aé", [4] = "Aé中",
+    [5] = "Aé中🙂", [6] = S, [7] = S,
+  }
+  for i = -7, 7 do
+    eq(utf8.remove(S, i), remove_from[i], "utf8.remove single index " .. i)
+  end
 
   eq(utf8.remove(S, 1, 1), "é中🙂B")
   eq(utf8.remove(S, 2, 2), "A中🙂B")
@@ -1273,7 +1578,25 @@ do
   -- remove deletes the selected character range.
   eq(utf8.remove(S, -1, 1), S)
   eq(utf8.remove(S, 2, 100), A)
-  eq(utf8.remove(S, 6), S)
+
+  -- ranges touching or crossing the ends
+  eq(utf8.remove(S, 5, 6), "Aé中🙂")
+  eq(utf8.remove(S, 6, 5), S)
+  eq(utf8.remove(S, 6, 6), S)
+  eq(utf8.remove(S, -6, -6), S)
+  eq(utf8.remove(S, -7, -7), S)
+  eq(utf8.remove(S, 0, 0), S)
+  eq(utf8.remove(S, 1, 0), S)
+  eq(utf8.remove(S, 1, -1), EMPTY)
+  eq(utf8.remove(S, -6, 6), EMPTY)
+  eq(utf8.remove(S, 6, -6), S)
+  eq(utf8.remove(S, -2, 2), S)
+  eq(utf8.remove(S, -2, -1), "Aé中")
+  eq(utf8.remove(S, -1, -2), S)
+  eq(utf8.remove(S, 2, -100), S)
+  eq(utf8.remove(S, -100, -100), S)
+  eq(utf8.remove(S, 100, -3), S)
+  eq(utf8.remove(S, -3, 100), "Aé")
 end
 
 ---
@@ -1334,6 +1657,19 @@ do
 
   raises(function() utf8.width(S, 2, 100) end)
   raises(function() utf8.width(S, 12, 12) end)
+
+  -- negative byte range and one past the end
+  eq(utf8.width(S, -11, -5), 6)
+  eq(utf8.width(S, -5, -5), 2)
+  eq(utf8.width(S, -11, 11), 7)
+
+  -- out-of-range byte positions are rejected
+  raises(function() utf8.width(S, 0) end)
+  raises(function() utf8.width(S, -12) end)
+  raises(function() utf8.width(S, 13) end)
+  raises(function() utf8.width(S, 1, 12) end)
+  raises(function() utf8.width(S, 1, 13) end)
+  raises(function() utf8.width(S, -12, -1) end)
 end
 
 ---
@@ -1412,6 +1748,57 @@ do
   eq(w, 2)
 
   raises(function() utf8.widthindex(S, 1, 3, 3) end)
+
+  -- every display width of the fixture, including zero and negative
+  local wi_expected = {
+    [-3] = { 1, -3, 1 },
+    [-2] = { 1, -2, 1 },
+    [-1] = { 1, -1, 1 },
+    [0] = { 1, 0, 1 },
+    [1] = { 1, 1, 1 },
+    [2] = { 2, 1, 1 },
+    [3] = { 3, 1, 2 },
+    [4] = { 3, 2, 2 },
+    [5] = { 4, 1, 2 },
+    [6] = { 4, 2, 2 },
+    [7] = { 5, 1, 1 },
+    [8] = { 5, nil, nil },
+    [9] = { 5, nil, nil },
+  }
+  for width = -3, 9 do
+    local idx, offset, win = utf8.widthindex(S, width)
+    eq(idx, wi_expected[width][1], "widthindex idx " .. width)
+    eq(offset, wi_expected[width][2], "widthindex offset " .. width)
+    eq(win, wi_expected[width][3], "widthindex width " .. width)
+  end
+
+  -- a byte position one past the end yields an empty result
+  i, off, w = utf8.widthindex(S, 1, 12)
+  eq(i, 0)
+  eq(off, nil)
+  eq(w, nil)
+
+  -- negative byte start and interior ranges
+  i, off, w = utf8.widthindex(S, 1, -11, -1)
+  eq(i, 1)
+  eq(off, 1)
+  eq(w, 1)
+
+  i, off, w = utf8.widthindex(S, 3, 4, 10)
+  eq(i, 2)
+  eq(off, 1)
+  eq(w, 2)
+
+  i, off, w = utf8.widthindex(S, 0, 4, 10)
+  eq(i, 1)
+  eq(off, 0)
+  eq(w, 2)
+
+  -- out-of-range byte positions are rejected
+  raises(function() utf8.widthindex(S, 1, 0) end)
+  raises(function() utf8.widthindex(S, 1, 13) end)
+  raises(function() utf8.widthindex(S, 1, -12) end)
+  raises(function() utf8.widthindex(S, 1, 1, 12) end)
 end
 
 ---
@@ -1491,6 +1878,59 @@ do
   eq(remain, -10)
 
   raises(function() utf8.widthlimit(S, 1, 3, 3) end)
+
+  -- every limit for the whole fixture
+  local wl_expected = {
+    [-12] = { 1, -5 },
+    [-11] = { 1, -4 },
+    [-10] = { 1, -3 },
+    [-9] = { 1, -2 },
+    [-8] = { 1, -1 },
+    [-7] = { 1, 0 },
+    [-6] = { 2, 0 },
+    [-5] = { 4, 0 },
+    [-4] = { 7, -1 },
+    [-3] = { 7, 0 },
+    [-2] = { 11, -1 },
+    [-1] = { 11, 0 },
+    [0] = { 0, 0 },
+    [1] = { 1, 0 },
+    [2] = { 3, 0 },
+    [3] = { 3, 1 },
+    [4] = { 6, 0 },
+    [5] = { 6, 1 },
+    [6] = { 10, 0 },
+    [7] = { 11, 0 },
+    [8] = { 11, 1 },
+    [9] = { 11, 2 },
+    [10] = { 11, 3 },
+    [11] = { 11, 4 },
+    [12] = { 11, 5 },
+  }
+  for limit = -12, 12 do
+    p, remain = utf8.widthlimit(S, limit)
+    eq(p, wl_expected[limit][1], "widthlimit position " .. limit)
+    eq(remain, wl_expected[limit][2], "widthlimit remain " .. limit)
+  end
+
+  -- interior ranges
+  p, remain = utf8.widthlimit(S, 1, 5, 4)
+  eq(p, 4)
+  eq(remain, 1)
+
+  p, remain = utf8.widthlimit(S, 1, 4, 2)
+  eq(p, 3)
+  eq(remain, 1)
+
+  p, remain = utf8.widthlimit(S, -2, 4, 10)
+  eq(p, 7)
+  eq(remain, 0)
+
+  -- out-of-range byte positions are rejected
+  raises(function() utf8.widthlimit(S, 1, 0) end)
+  raises(function() utf8.widthlimit(S, 1, 13) end)
+  raises(function() utf8.widthlimit(S, 1, -12) end)
+  raises(function() utf8.widthlimit(S, 1, 1, 12) end)
 end
 
 ---
@@ -1650,6 +2090,16 @@ do
       "invalidoffset boundary " .. i
     )
   end
+
+  -- starting beyond either end finds nothing
+  eq(utf8.invalidoffset(bad, 10), nil)
+  eq(utf8.invalidoffset(bad, 12), nil)
+  eq(utf8.invalidoffset(bad, -12), 4)
+
+  -- the empty string is always valid, whatever the start index
+  eq(utf8.invalidoffset("", 0), nil)
+  eq(utf8.invalidoffset("", 1), nil)
+  eq(utf8.invalidoffset("", -1), nil)
 end
 
 ---
@@ -1773,6 +2223,57 @@ do
   raises(function() graphemes(S, 3) end)
   raises(function() graphemes(S, 5, 11) end)
   raises(function() graphemes(S, 12, 12) end)
+
+  -- a clampable initial byte position starts the scan there
+  assert_array(graphemes(S, -5), {
+    { 7, 10 },
+    { 11, 11 },
+  })
+
+  assert_array(graphemes(S, -11), {
+    { 1, 1 },
+    { 2, 3 },
+    { 4, 6 },
+    { 7, 10 },
+    { 11, 11 },
+  })
+
+  -- byte positions at the very end produce no clusters
+  assert_array(graphemes(S, 12), {})
+  assert_array(graphemes(S, 13), {})
+
+  -- negative byte ranges
+  assert_array(graphemes(S, -5, -1), {
+    { 7, 10 },
+    { 11, 11 },
+  })
+
+  assert_array(graphemes(S, -11, -5), {
+    { 1, 1 },
+    { 2, 3 },
+    { 4, 6 },
+    { 7, 10 },
+  })
+
+  -- single-character byte ranges
+  assert_array(graphemes(S, 1, 1), { { 1, 1 } })
+  assert_array(graphemes(S, 2, 2), { { 2, 3 } })
+  assert_array(graphemes(S, 2, 3), { { 2, 3 } })
+  assert_array(graphemes(S, 11, 11), { { 11, 11 } })
+  assert_array(graphemes(S, -5, -5), { { 7, 10 } })
+  assert_array(graphemes(S, -1, -1), { { 11, 11 } })
+
+  -- out-of-range and interior byte positions
+  raises(function() graphemes(S, 0) end)
+  raises(function() graphemes(S, -12) end)
+  raises(function() graphemes(S, -13) end)
+  raises(function() graphemes(S, 3, 3) end)
+  raises(function() graphemes(S, 5, 5) end)
+  raises(function() graphemes(S, 6, 7) end)
+  raises(function() graphemes(S, -6, -1) end)
+  raises(function() graphemes(S, 1, 12) end)
+  raises(function() graphemes(S, 1, 13) end)
+  raises(function() graphemes(S, -12, -1) end)
 end
 
 ---
