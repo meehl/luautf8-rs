@@ -784,7 +784,11 @@ fn l_next(
     let index = i.unwrap_or_else(|| if o.is_some() { 1 } else { 0 });
 
     let position = if index == 0 {
-        char_start(&bytes, offset - 1)
+        if offset == 0 {
+            return (0, 0).into_lua_multi(lua);
+        } else {
+            char_start(&bytes, offset - 1)
+        }
     } else {
         if offset == 0 && index == 1 {
             Some(0)

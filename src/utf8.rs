@@ -158,5 +158,9 @@ pub fn move_by_chars(bytes: &[u8], start: usize, distance: i64) -> Option<usize>
         }
     }
 
+    if position == bytes.len() {
+        return None;
+    }
+
     Some(position)
 }
