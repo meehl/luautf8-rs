@@ -54,18 +54,18 @@ end
 -- Test string: "Aé中🙂B"
 
 -- character indices:
--- 1 A
--- 2 é
--- 3 中
--- 4 🙂
--- 5 B
+-- 1  (-5)  A
+-- 2  (-4)  é
+-- 3  (-3)  中
+-- 4  (-2)  🙂
+-- 5  (-1)  B
 
 -- byte indices:
--- 1 A
--- 2 é
--- 4 中
--- 7 🙂
--- 11 B
+-- 1  (-11)  A
+-- 2  (-5)   é
+-- 4  (-8)   中
+-- 7  (-10)  🙂
+-- 11 (-11)  B
 
 -- byte length = 11
 -- character length = 5
@@ -81,6 +81,226 @@ local B = "B"
 
 eq(#S, 11, "fixture byte length")
 eq(utf8.len(S), 5, "fixture character length")
+
+---
+
+-- utf8.offset
+do
+  -- requires at least one argument
+  raises(function() utf8.offset(S) end)
+
+  assert_array({ utf8.offset(S, -5) }, { 1, 1 })
+  assert_array({ utf8.offset(S, -4) }, { 2, 3 })
+  assert_array({ utf8.offset(S, -3) }, { 4, 6 })
+  assert_array({ utf8.offset(S, -2) }, { 7, 10 })
+  assert_array({ utf8.offset(S, -1) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 0) }, { 1, 1 })
+  assert_array({ utf8.offset(S, 1) }, { 1, 1 })
+  assert_array({ utf8.offset(S, 2) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 3) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 4) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 5) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 6) }, { 12, 12 })
+
+  eq(utf8.offset(S, -100), nil)
+  eq(utf8.offset(S, -6), nil)
+  eq(utf8.offset(S, 7), nil)
+  eq(utf8.offset(S, 100), nil)
+
+  -- n == 0: find the start of the character containing byte position i
+  assert_array({ utf8.offset(S, 0, -11) }, { 1, 1 })
+  assert_array({ utf8.offset(S, 0, -10) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 0, -9) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 0, -8) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 0, -7) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 0, -6) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 0, -5) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, -4) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, -3) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, -2) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, -1) }, { 11, 11 })
+
+  assert_array({ utf8.offset(S, 0, 1) }, { 1, 1 })
+  assert_array({ utf8.offset(S, 0, 2) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 0, 3) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 0, 4) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 0, 5) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 0, 6) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 0, 7) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, 8) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, 9) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, 10) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 0, 11) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 0, 12) }, { 12, 12 })
+
+  raises(function() utf8.offset(S, 0, 0) end)
+  raises(function() utf8.offset(S, 0, -100) end)
+  raises(function() utf8.offset(S, 0, -12) end)
+  raises(function() utf8.offset(S, 0, 13) end)
+  raises(function() utf8.offset(S, 0, 100) end)
+
+  -- positive byte index
+  assert_array({ utf8.offset(S, 1, 1) }, { 1, 1 })
+  assert_array({ utf8.offset(S, 1, 2) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 1, 4) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 1, 7) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 1, 11) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 1, 12) }, { 12, 12 })
+
+  assert_array({ utf8.offset(S, 1, -1) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 1, -5) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 1, -8) }, { 4, 6 })
+  assert_array({ utf8.offset(S, 1, -10) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 1, -11) }, { 1, 1 })
+
+  -- zero byte position
+  raises(function() utf8.offset(S, 1, 0) end)
+
+  -- starting inside a multibyte character
+  raises(function() utf8.offset(S, 1, 3) end)
+  raises(function() utf8.offset(S, 1, 5) end)
+  raises(function() utf8.offset(S, 1, 6) end)
+  raises(function() utf8.offset(S, 1, 8) end)
+  raises(function() utf8.offset(S, 1, 9) end)
+  raises(function() utf8.offset(S, 1, 10) end)
+  raises(function() utf8.offset(S, 1, -9) end)
+  raises(function() utf8.offset(S, 1, -7) end)
+  raises(function() utf8.offset(S, 1, -6) end)
+  raises(function() utf8.offset(S, 1, -4) end)
+  raises(function() utf8.offset(S, 1, -3) end)
+  raises(function() utf8.offset(S, 1, -2) end)
+
+  raises(function() utf8.offset(S, 1, -12) end)
+  raises(function() utf8.offset(S, 1, -100) end)
+  raises(function() utf8.offset(S, 1, 13) end)
+  raises(function() utf8.offset(S, 1, 100) end)
+
+  -- mixed
+  assert_array({ utf8.offset(S, 2, -11) }, { 2, 3 })
+  assert_array({ utf8.offset(S, 2, -8) }, { 7, 10 })
+  assert_array({ utf8.offset(S, 2, -5) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 3, -8) }, { 11, 11 })
+  assert_array({ utf8.offset(S, 4, -10) }, { 11, 11 })
+  assert_array({ utf8.offset(S, -4, -1) }, { 1, 1 })
+  assert_array({ utf8.offset(S, -3, -1) }, { 2, 3 })
+  assert_array({ utf8.offset(S, -2, -1) }, { 4, 6 })
+  assert_array({ utf8.offset(S, -1, -1) }, { 7, 10 })
+  assert_array({ utf8.offset(S, -2, -5) }, { 2, 3 })
+  assert_array({ utf8.offset(S, -2, 4) }, { 1, 1 })
+  assert_array({ utf8.offset(S, -3, 7) }, { 1, 1 })
+
+  eq(utf8.offset(S, -5, -1), nil)
+  eq(utf8.offset(S, 4, -1), nil)
+  eq(utf8.offset(S, 7, -1), nil)
+  eq(utf8.offset(S, 11, -1), nil)
+
+  -- accepts invalid utf8
+  assert_array({ utf8.offset("안\xFF녕", 3) }, { 5, 7 }) -- invalid leading byte
+  assert_array({ utf8.offset("안\xC0\xAF녕", 3) }, { 6, 8 }) -- overlong
+  assert_array({ utf8.offset("\x80\x80\x80", 0, 2) }, { 1, 3 }) -- starts with continuation bytes
+  -- accepts valid utf8 with surrogates and code points above 0x10FFFF
+  assert_array({ utf8.offset("안\xED\xA0\x80녕", 3) }, { 7, 9 })
+  assert_array({ utf8.offset("안\xF8\x88\x80\x80\x80녕", 3) }, { 9, 11 })
+end
+
+---
+
+-- utf8.codepoint
+do
+  eq(utf8.codepoint(S, 1), 0x41)
+  eq(utf8.codepoint(S, 2), 0xE9)
+  eq(utf8.codepoint(S, 4), 0x4E2D)
+  eq(utf8.codepoint(S, 7), 0x1F642)
+  eq(utf8.codepoint(S, 11), 0x42)
+
+  assert_array({ utf8.codepoint(S, 1, 11) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  assert_array({ utf8.codepoint(S, 2, 6) }, { 0xE9, 0x4E2D })
+
+  -- negative byte indices
+  eq(utf8.codepoint(S, -1), 0x42)
+  eq(utf8.codepoint(S, -5), 0x1F642)
+  eq(utf8.codepoint(S, -8), 0x4E2D)
+  eq(utf8.codepoint(S, -10), 0xE9)
+  eq(utf8.codepoint(S, -11), 0x41)
+
+  assert_array({ utf8.codepoint(S, -5, -1) }, { 0x1F642, 0x42 })
+
+  -- zero is invalid as a byte position
+  raises(function() utf8.codepoint(S, 0) end)
+  raises(function() utf8.codepoint(S, 12) end)
+
+  -- empty interval
+  eq(utf8.codepoint(S, 5, 4), nil)
+
+  -- invalid sequences
+  raises(function() utf8.codepoint("\xFF") end)
+
+  -- lax
+  eq(utf8.codepoint(utf8.char(0xD800), 1, 1, true), 0xD800)
+  eq(utf8.codepoint(utf8.char(0xFF), 1, 1, true), 0xFF)
+
+  -- empty ranges return no code points
+  eq(select("#", utf8.codepoint(S, 5, 4)), 0)
+
+  -- positions that fall inside a sequence are errors
+  raises(function() utf8.codepoint(S, 3) end)
+  raises(function() utf8.codepoint(S, 6) end)
+  raises(function() utf8.codepoint(S, 0, 3) end)
+
+  -- lax mode accepts surrogates but still rejects overlong forms
+  eq(utf8.codepoint(utf8.char(0xD800), 1, 1, true), 0xD800)
+  raises(function() utf8.codepoint(utf8.char(0xD800), 1, 1) end)
+  raises(function() utf8.codepoint("\xC0\x80", 1, 1, true) end)
+  raises(function() utf8.codepoint("\xF0\x80\x80\x80", 1, 1, true) end)
+
+  -- negative byte range
+  assert_array({ utf8.codepoint(S, -11, -5) }, { 0x41, 0xE9, 0x4E2D, 0x1F642 })
+
+  -- an empty range at the start
+  eq(select("#", utf8.codepoint(S, 1, 0)), 0)
+
+  -- out-of-range byte positions are rejected
+  raises(function() utf8.codepoint(S, -12) end)
+  raises(function() utf8.codepoint(S, 13) end)
+  raises(function() utf8.codepoint(S, -1, 12) end)
+end
+
+---
+
+-- utf8.codes
+do
+  local expected = {
+    { 1,  0x41 },
+    { 2,  0xE9 },
+    { 4,  0x4E2D },
+    { 7,  0x1F642 },
+    { 11, 0x42 },
+  }
+
+  local got = collect_codes(S)
+  assert_array(got, expected)
+
+  local got2 = {}
+  for p, cp in utf8.codes("é🙂") do
+    got2[#got2 + 1] = { p, cp }
+  end
+  assert_array(got2, {
+    { 1, 0xE9 },
+    { 3, 0x1F642 },
+  })
+
+  raises(function() collect_codes(utf8.char(0xD800)) end)
+  raises(function() collect_codes("\xFF") end)
+
+  -- lax
+  local got3 = collect_codes(utf8.char(0xD800), true)
+  assert_array(got3, {
+      { 1, 0xD800 }
+  })
+
+  -- reject out of range codepoint even with lax
+  raises(function() collect_codes("\xFF", true) end)
+end
 
 ---
 
@@ -104,26 +324,9 @@ do
   eq(utf8.byte(S, -6), nil)
 
   -- ranges
-  local a, b, c, d, e = utf8.byte(S, 1, 5)
-  eq(a, 0x41)
-  eq(b, 0xE9)
-  eq(c, 0x4E2D)
-  eq(d, 0x1F642)
-  eq(e, 0x42)
-
-  a, b, c, d, e = utf8.byte(S, -5, -1)
-  eq(a, 0x41)
-  eq(b, 0xE9)
-  eq(c, 0x4E2D)
-  eq(d, 0x1F642)
-  eq(e, 0x42)
-
-  a, b, c, d, e = utf8.byte(S, 0, 3)
-  eq(a, 0x41)
-  eq(b, 0xE9)
-  eq(c, 0x4E2D)
-  eq(d, nil)
-  eq(e, nil)
+  assert_array({ utf8.byte(S, 1, 5) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  assert_array({ utf8.byte(S, -5, -1) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  assert_array({ utf8.byte(S, 0, 3) }, { 0x41, 0xE9, 0x4E2D })
 
   -- empty string
   eq(utf8.byte(EMPTY), nil)
@@ -153,6 +356,13 @@ do
   -- NUL bytes survive a byte -> char round trip.
   local nul = "\0x"
   eq(string.char(utf8.byte(nul, 1, -1)), nul)
+
+  -- raises error on invalid utf8
+  raises(function() utf8.byte("\xFF") end) -- invalid leading byte
+  raises(function() utf8.byte("\xC0\xAF") end) -- overlong
+  -- but accepts surrogates and code points above 0x10FFFF
+  eq(utf8.byte("\xED\xA0\x80"), 55296)
+  eq(utf8.byte("\xF8\x88\x80\x80\x80"), 2097152)
 end
 
 ---
@@ -220,17 +430,9 @@ do
   raises(function() utf8.len(S, 0, 11) end)
 
   -- starting in the middle of a UTF-8 sequence
-  local r, e = utf8.len(S, 3, 3)
-  eq(r, nil)
-  eq(e, 3)
-
-  r, e = utf8.len(S, 5, 10)
-  eq(r, nil)
-  eq(e, 5)
-
-  r, e = utf8.len(S, -6, -1)
-  eq(r, nil)
-  eq(e, 6)
+  assert_array({ utf8.len(S, 3, 3) }, { nil, 3 })
+  assert_array({ utf8.len(S, 5, 10) }, { nil, 5 })
+  assert_array({ utf8.len(S, -6, -1) }, { nil, 6 })
 
   -- end in the middle of a UTF-8 sequence
   eq(utf8.len(S, 1, 7), 4)
@@ -246,29 +448,12 @@ do
   local bad5 = "\xED\xA0\x80"
   local bad6 = "\xF8\x88\x80\x80\x80"
 
-  local n, p = utf8.len(bad1)
-  eq(n, nil)
-  eq(p, 1)
-
-  n, p = utf8.len(bad2)
-  eq(n, nil)
-  eq(p, 1)
-
-  n, p = utf8.len(bad3)
-  eq(n, nil)
-  eq(p, 1)
-
-  n, p = utf8.len(bad4)
-  eq(n, nil)
-  eq(p, 1)
-
-  n, p = utf8.len(bad5)
-  eq(n, nil)
-  eq(p, 1)
-
-  n, p = utf8.len(bad6)
-  eq(n, nil)
-  eq(p, 1)
+  assert_array({ utf8.len(bad1) }, { nil, 1 })
+  assert_array({ utf8.len(bad2) }, { nil, 1 })
+  assert_array({ utf8.len(bad3) }, { nil, 1 })
+  assert_array({ utf8.len(bad4) }, { nil, 1 })
+  assert_array({ utf8.len(bad5) }, { nil, 1 })
+  assert_array({ utf8.len(bad6) }, { nil, 1 })
 
   -- lax mode
   check(utf8.len(bad1, nil, nil, true) ~= nil, "len should accept invalid byte in lax mode")
@@ -381,6 +566,14 @@ do
   eq(utf8.sub(EMPTY, 0, 0), EMPTY)
   eq(utf8.sub(EMPTY, -100, 100), EMPTY)
   eq(utf8.sub(EMPTY, 100, -100), EMPTY)
+
+  -- accepts invalid utf8
+  eq(utf8.sub("a\xFFb", 2), "\xFFb") -- invalid leading byte
+  eq(utf8.sub("a\xC0\xAFb", 2), "\xC0\xAFb") -- overlong
+  eq(utf8.sub("\x80\x80\x80b", 1), "\x80\x80\x80b") -- starts with continuation bytes
+  -- accepts valid utf8 with surrogates and code points above 0x10FFFF
+  eq(utf8.sub("a\xED\xA0\x80b", 2), "\xED\xA0\x80b")
+  eq(utf8.sub("a\xF8\x88\x80\x80\x80b", 2), "\xF8\x88\x80\x80\x80b")
 end
 
 ---
@@ -942,212 +1135,6 @@ end
 
 ---
 
--- utf8.offset
-do
-  -- n == 0 has special meaning: find the start of the character
-  -- containing byte position i.
-  eq(utf8.offset(S, 0, 1), 1)
-  eq(utf8.offset(S, 0, 2), 2)
-  eq(utf8.offset(S, 0, 3), 2)
-  eq(utf8.offset(S, 0, 4), 4)
-  eq(utf8.offset(S, 0, 5), 4)
-  eq(utf8.offset(S, 0, 6), 4)
-  eq(utf8.offset(S, 0, 7), 7)
-  eq(utf8.offset(S, 0, 8), 7)
-  eq(utf8.offset(S, 0, 9), 7)
-  eq(utf8.offset(S, 0, 10), 7)
-  eq(utf8.offset(S, 0, 11), 11)
-
-  -- positive n from the beginning
-  eq(utf8.offset(S, 1), 1)
-  eq(utf8.offset(S, 2), 2)
-  eq(utf8.offset(S, 3), 4)
-  eq(utf8.offset(S, 4), 7)
-  eq(utf8.offset(S, 5), 11)
-  eq(utf8.offset(S, 6), 12)
-
-  -- positive n past the last character is nil
-  eq(utf8.offset(S, 7), nil)
-
-  -- negative n from the end
-  eq(utf8.offset(S, -1), 11)
-  eq(utf8.offset(S, -2), 7)
-  eq(utf8.offset(S, -3), 4)
-  eq(utf8.offset(S, -4), 2)
-  eq(utf8.offset(S, -5), 1)
-  eq(utf8.offset(S, -6), nil)
-
-  -- start position is a BYTE index
-  eq(utf8.offset(S, 1, 1), 1)
-  eq(utf8.offset(S, 1, 2), 2)
-  eq(utf8.offset(S, 1, 4), 4)
-  eq(utf8.offset(S, 1, 7), 7)
-  eq(utf8.offset(S, 1, 11), 11)
-
-  eq(utf8.offset(S, 1, -1), 11)
-  eq(utf8.offset(S, 4, -1), nil)
-  eq(utf8.offset(S, 7, -1), nil)
-  eq(utf8.offset(S, 11, -1), nil)
-
-  -- zero byte position
-  raises(function() utf8.offset(S, 1, 0) end)
-
-  -- starting inside a multibyte character
-  raises(function() utf8.offset(S, 1, 3) end)
-  raises(function() utf8.offset(S, 1, 5) end)
-  raises(function() utf8.offset(S, 1, 6) end)
-  raises(function() utf8.offset(S, 1, 8) end)
-  raises(function() utf8.offset(S, 1, 9) end)
-  raises(function() utf8.offset(S, 1, 10) end)
-
-  -- out of range byte positions
-  raises(function() utf8.offset(S, 1, 13) end)
-
-  -- offset returns the first and the last byte of the addressed character
-  assert_array({ utf8.offset(S, 1) }, { 1, 1 })
-  assert_array({ utf8.offset(S, 2) }, { 2, 3 })
-  assert_array({ utf8.offset(S, 3) }, { 4, 6 })
-  assert_array({ utf8.offset(S, 4) }, { 7, 10 })
-  assert_array({ utf8.offset(S, 5) }, { 11, 11 })
-  assert_array({ utf8.offset(S, 6) }, { 12, 12 })
-
-  assert_array({ utf8.offset(S, -5) }, { 1, 1 })
-  assert_array({ utf8.offset(S, 0) }, { 1, 1 })
-
-  -- n == 0 reports the character containing a (possibly interior) byte
-  assert_array({ utf8.offset(S, 0, 3) }, { 2, 3 })
-  assert_array({ utf8.offset(S, 0, 5) }, { 4, 6 })
-  assert_array({ utf8.offset(S, 0, 11) }, { 11, 11 })
-
-  -- byte position len+1 (one past the end) is accepted
-  assert_array({ utf8.offset(S, 0, 12) }, { 12, 12 })
-  assert_array({ utf8.offset(S, 1, 12) }, { 12, 12 })
-
-  -- negative byte positions start the walk from the end
-  eq(utf8.offset(S, 1, -11), 1)
-  assert_array({ utf8.offset(S, 2, -11) }, { 2, 3 })
-  eq(utf8.offset(S, -4, -1), 1)
-  eq(utf8.offset(S, -5, -1), nil)
-
-  -- byte positions outside [-len, len+1] are rejected
-  raises(function() utf8.offset(S, 1, -12) end)
-  raises(function() utf8.offset(S, 0, 13) end)
-  raises(function() utf8.offset(S, 0, -12) end)
-  raises(function() utf8.offset(S, 0, 0) end)
-end
-
----
-
--- utf8.codepoint
-do
-  eq(utf8.codepoint(S, 1), 0x41)
-  eq(utf8.codepoint(S, 2), 0xE9)
-  eq(utf8.codepoint(S, 4), 0x4E2D)
-  eq(utf8.codepoint(S, 7), 0x1F642)
-  eq(utf8.codepoint(S, 11), 0x42)
-
-  local a, b, c, d, e = utf8.codepoint(S, 1, 11)
-  eq(a, 0x41)
-  eq(b, 0xE9)
-  eq(c, 0x4E2D)
-  eq(d, 0x1F642)
-  eq(e, 0x42)
-
-  a, b, c = utf8.codepoint(S, 2, 6)
-  eq(a, 0xE9)
-  eq(b, 0x4E2D)
-  eq(c, nil)
-
-  -- negative byte indices
-  eq(utf8.codepoint(S, -1), 0x42)
-  eq(utf8.codepoint(S, -5), 0x1F642)
-  eq(utf8.codepoint(S, -8), 0x4E2D)
-  eq(utf8.codepoint(S, -10), 0xE9)
-  eq(utf8.codepoint(S, -11), 0x41)
-
-  a, b = utf8.codepoint(S, -5, -1)
-  eq(a, 0x1F642)
-  eq(b, 0x42)
-
-  -- zero is invalid as a byte position
-  raises(function() utf8.codepoint(S, 0) end)
-  raises(function() utf8.codepoint(S, 12) end)
-
-  -- empty interval
-  eq(utf8.codepoint(S, 5, 4), nil)
-
-  -- invalid sequences
-  raises(function() utf8.codepoint("\xFF") end)
-
-  -- lax
-  eq(utf8.codepoint(utf8.char(0xD800), 1, 1, true), 0xD800)
-  eq(utf8.codepoint(utf8.char(0xFF), 1, 1, true), 0xFF)
-
-  -- empty ranges return no code points
-  eq(select("#", utf8.codepoint(S, 5, 4)), 0)
-
-  -- positions that fall inside a sequence are errors
-  raises(function() utf8.codepoint(S, 3) end)
-  raises(function() utf8.codepoint(S, 6) end)
-  raises(function() utf8.codepoint(S, 0, 3) end)
-
-  -- lax mode accepts surrogates but still rejects overlong forms
-  eq(utf8.codepoint(utf8.char(0xD800), 1, 1, true), 0xD800)
-  raises(function() utf8.codepoint(utf8.char(0xD800), 1, 1) end)
-  raises(function() utf8.codepoint("\xC0\x80", 1, 1, true) end)
-  raises(function() utf8.codepoint("\xF0\x80\x80\x80", 1, 1, true) end)
-
-  -- negative byte range
-  assert_array({ utf8.codepoint(S, -11, -5) }, { 0x41, 0xE9, 0x4E2D, 0x1F642 })
-
-  -- an empty range at the start
-  eq(select("#", utf8.codepoint(S, 1, 0)), 0)
-
-  -- out-of-range byte positions are rejected
-  raises(function() utf8.codepoint(S, -12) end)
-  raises(function() utf8.codepoint(S, 13) end)
-  raises(function() utf8.codepoint(S, -1, 12) end)
-end
-
----
-
--- utf8.codes
-do
-  local expected = {
-    { 1,  0x41 },
-    { 2,  0xE9 },
-    { 4,  0x4E2D },
-    { 7,  0x1F642 },
-    { 11, 0x42 },
-  }
-
-  local got = collect_codes(S)
-  assert_array(got, expected)
-
-  local got2 = {}
-  for p, cp in utf8.codes("é🙂") do
-    got2[#got2 + 1] = { p, cp }
-  end
-  assert_array(got2, {
-    { 1, 0xE9 },
-    { 3, 0x1F642 },
-  })
-
-  raises(function() collect_codes(utf8.char(0xD800)) end)
-  raises(function() collect_codes("\xFF") end)
-
-  -- lax
-  local got3 = collect_codes(utf8.char(0xD800), true)
-  assert_array(got3, {
-      { 1, 0xD800 }
-  })
-
-  -- reject out of range codepoint even with lax
-  raises(function() collect_codes("\xFF", true) end)
-end
-
----
-
 -- utf8.escape
 do
   eq(utf8.escape("abc"), "abc")
@@ -1362,101 +1349,105 @@ end
 
 -- utf8.next
 do
-  local p, cp = utf8.next(S)
-  eq(p, 1)
-  eq(cp, 0x41)
+  assert_array({ utf8.next(S) }, { 1, 0x41 })
 
-  p, cp = utf8.next(S, 1)
-  eq(p, 2)
-  eq(cp, 0xE9)
 
-  p, cp = utf8.next(S, 2)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
+  assert_array({ utf8.next(S, -1) }, { nil, nil })
+  assert_array({ utf8.next(S, -2) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, -3) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, -4) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, -5) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, -6) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, -7) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, -8) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, -9) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, -10) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, -11) }, { 2, 0xE9 })
 
-  p, cp = utf8.next(S, 4)
-  eq(p, 7)
-  eq(cp, 0x1F642)
+  assert_array({ utf8.next(S, -12) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, -13) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, -100) }, { 1, 0x41 })
 
-  p, cp = utf8.next(S, 7)
-  eq(p, 11)
-  eq(cp, 0x42)
+  assert_array({ utf8.next(S, 0) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, 1) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 2) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 3) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 4) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 5) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 6) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 7) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, 8) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, 9) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, 10) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, 11) }, { nil, nil })
 
-  p, cp = utf8.next(S, 11)
-  eq(p, nil)
-  eq(cp, nil)
+  assert_array({ utf8.next(S, 12) }, { nil, nil })
+  assert_array({ utf8.next(S, 13) }, { nil, nil })
+  assert_array({ utf8.next(S, 100) }, { nil, nil })
 
-  -- n.
-  p, cp = utf8.next(S, 1, 1)
-  eq(p, 2)
-  eq(cp, 0xE9)
 
-  p, cp = utf8.next(S, 1, 2)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
+  assert_array({ utf8.next(S, 0, 0) }, { 0, 0 })
 
-  p, cp = utf8.next(S, 1, 4)
-  eq(p, 11)
-  eq(cp, 0x42)
+  assert_array({ utf8.next(S, 1, -100) }, { nil, nil })
+  assert_array({ utf8.next(S, 1, -1) }, { nil, nil })
+
+  assert_array({ utf8.next(S, 1, 0) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, 1, 1) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 1, 2) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 1, 3) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 1, 4) }, { 11, 0x42 })
+
+  assert_array({ utf8.next(S, 1, 5) }, { nil, nil })
+  assert_array({ utf8.next(S, 1, 100) }, { nil, nil })
 
   -- negative n
-  p, cp = utf8.next(S, 11, -1)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.next(S, 7, -1)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
-
-  p, cp = utf8.next(S, 4, -1)
-  eq(p, 2)
-  eq(cp, 0xE9)
+  assert_array({ utf8.next(S, 11, -1) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 7, -1) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 4, -1) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 7, -2) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 7, -3) }, { 1, 0x41 })
 
   -- zero n
-  p, cp = utf8.next(S, 7, 0)
-  eq(p, 7)
-  eq(cp, 0x1F642)
+  assert_array({ utf8.next(S, 1, 0) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, 2, 0) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 3, 0) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 5, 0) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 7, 0) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 9, 0) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 11, 0) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, -1, 0) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, -11, 0) }, { 1, 0x41 })
 
-  -- inside multibyte sequence
-  p, cp = utf8.next(S, 3)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
+  assert_array({ utf8.next(S, -100, 0) }, { 0, 0 })
+  assert_array({ utf8.next(S, -12, 0) }, { 0, 0 })
+  assert_array({ utf8.next(S, 12, 0) }, { nil, nil })
 
-  -- out of range
-  p, cp = utf8.next(S, 12)
-  eq(p, nil)
-  eq(cp, nil)
+  -- TODO: UB in original implementation? ignore for now
+  --assert_array({ utf8.next(S, 100, 0) }, { 99, 0 })
+  --assert_array({ utf8.next(S, 13, 0) }, { 13, 0 })
+  --assert_array({ utf8.next(S, 15, 0) }, { 15, 0 })
 
   -- a zero offset starts at the first character
-  p, cp = utf8.next(S, 0)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.next(S, 0, 1)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.next(S, 0, -1)
-  eq(p, nil)
-  eq(cp, nil)
-
-  -- negative offsets walk backwards from the end
-  p, cp = utf8.next(S, -5)
-  eq(p, 11)
-  eq(cp, 0x42)
-
-  p, cp = utf8.next(S, -6)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.next(S, -1)
-  eq(p, nil)
-  eq(cp, nil)
+  assert_array({ utf8.next(S, 0, -100) }, { nil, nil })
+  assert_array({ utf8.next(S, 0, -1) }, { nil, nil })
+  assert_array({ utf8.next(S, 0) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, 0, 1) }, { 1, 0x41 })
+  assert_array({ utf8.next(S, 0, 2) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 0, 3) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 0, 4) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 0, 5) }, { 11, 0x42 })
+  assert_array({ utf8.next(S, 0, 6) }, { nil, nil })
+  assert_array({ utf8.next(S, 0, 100) }, { nil, nil })
 
   -- a negative n from a byte position past the end steps backwards
-  p, cp = utf8.next(S, 12, -1)
-  eq(p, 11)
-  eq(cp, 0x42)
+  assert_array({ utf8.next(S, 12, -1) }, { 11, 0x42 })
+
+  -- n steps from inside a multibyte sequence
+  assert_array({ utf8.next(S, 3, -1) }, { 2, 0xE9 })
+  assert_array({ utf8.next(S, 6, -1) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, 9, -2) }, { 4, 0x4E2D })
+  assert_array({ utf8.next(S, -1, -1) }, { 7, 0x1F642 })
+  assert_array({ utf8.next(S, 1, -1) }, { nil, nil })
 
   -- iterator form
   local got = {}
@@ -1470,37 +1461,6 @@ do
     { 7,  0x1F642 },
     { 11, 0x42 },
   })
-
-  -- negative byte offsets clamp to the start
-  p, cp = utf8.next(S, -12)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.next(S, -13)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.next(S, 13)
-  eq(p, nil)
-  eq(cp, nil)
-
-  -- n == 0 from byte position 0 returns position 0
-  p, cp = utf8.next(S, 0, 0)
-  eq(p, 0)
-  eq(cp, 0)
-
-  -- n steps from inside a multibyte sequence
-  p, cp = utf8.next(S, 3, -1)
-  eq(p, 2)
-  eq(cp, 0xE9)
-
-  p, cp = utf8.next(S, -1, -1)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.next(S, 1, -1)
-  eq(p, nil)
-  eq(cp, nil)
 end
 
 ---

@@ -9,8 +9,11 @@
 //! For applications that embed Lua via `mlua`, you can use [`create_module`] to create the module
 //! table and register it with a [`mlua::Lua`] instance directly.
 
+mod chars;
 mod lua_pattern;
 mod utf8;
+
+use std::ops::Range;
 
 use icu_casemap::CaseMapper;
 use icu_properties::{
@@ -25,13 +28,12 @@ use unicode_normalization::{UnicodeNormalization, is_nfc};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
+    chars::{char_count, char_range, char_start, is_at_continuation, move_by, next_boundary},
     lua_pattern::{
         CaptureValue, Match, Pattern, ReplacementError, ReplacementString, find, gmatch,
         replace_with,
     },
-    utf8::{
-        char_start, decode_utf8, encode_utf8, invalid_codepoint, move_by_chars, next_char_position,
-    },
+    utf8::{CodePoints, decode, encode},
 };
 
 const CHAR_PATTERN: &[u8] = if cfg!(any(feature = "lua51", feature = "luajit")) {
@@ -103,6 +105,33 @@ pub fn create_module(lua: &Lua) -> LuaResult<Table> {
     Ok(exports)
 }
 
+/// Converts a relative Lua-style 1-based character index to an absolute 0-based byte index.
+///
+/// Negative indices count backward from the end.
+/// Returns `None` for index zero or an invalid character position.
+fn lua_char_index_to_byte_offset(s: &[u8], idx: LuaInteger) -> Option<usize> {
+    if idx == 0 {
+        None
+    } else if idx > 0 {
+        move_by(s, 0, (idx - 1) as isize)
+    } else {
+        move_by(s, s.len(), idx as isize)
+    }
+}
+
+/// Converts a Lua-style 1-based inclusive character range `i..=j` to a 0-based byte range `start..end`.
+fn lua_char_range_to_byte_range(s: &[u8], i: LuaInteger, j: LuaInteger) -> Range<usize> {
+    let len = s.len();
+    let clamp = |x| if x > 0 { len } else { 0 };
+
+    let start = lua_char_index_to_byte_offset(s, i).unwrap_or(clamp(i));
+    let end = match lua_char_index_to_byte_offset(s, j) {
+        Some(inclusive_end) => next_boundary(s, inclusive_end),
+        None => clamp(j),
+    };
+    start..end
+}
+
 /// Helper for constructing a `mlua::Error::BadArgument`
 fn bad_argument(to: impl Into<String>, pos: usize, cause: mlua::Error) -> mlua::Error {
     mlua::Error::BadArgument {
@@ -137,9 +166,10 @@ fn normalize_lua_index(pos: LuaInteger, len: usize) -> usize {
 
 fn l_offset(
     lua: &Lua,
-    (s, n, i): (String, LuaInteger, Option<LuaInteger>),
+    (s, n, i): (LuaString, LuaInteger, Option<LuaInteger>),
 ) -> LuaResult<MultiValue> {
-    let len = s.len();
+    let bytes = s.as_bytes();
+    let len = bytes.len();
     let i = match i {
         Some(i) if i < 0 => len as LuaInteger + i + 1,
         Some(i) => i,
@@ -155,40 +185,28 @@ fn l_offset(
         ));
     }
 
-    let pos = (i - 1) as usize; // translate to 0-based index
+    let mut pos = (i - 1) as usize;
 
-    let start = match n {
-        0 => Some(s.floor_char_boundary(pos)),
-        _ if !s.is_char_boundary(pos) => {
+    if n != 0 {
+        if is_at_continuation(&bytes, pos) {
             return Err(mlua::Error::runtime(
                 "initial position is a continuation byte",
             ));
         }
-        n if n > 0 => s[pos..]
-            .char_indices()
-            .map(|(offset, _)| pos + offset)
-            // char right after the end returns the string length in bytes
-            .chain(std::iter::once(s.len()))
-            .nth((n - 1) as usize),
-        n if n < 0 => s[..pos]
-            .char_indices()
-            .rev()
-            .nth((-n - 1) as usize)
-            .map(|(offset, _)| offset),
-        _ => unreachable!("LuaInteger must be zero, positive, or negative"),
+
+        let n = if n > 0 { n - 1 } else { n } as isize;
+        if let Some(new_pos) = move_by(&bytes, pos, n) {
+            pos = new_pos;
+        } else {
+            return (Value::Nil,).into_lua_multi(lua);
+        }
+    }
+
+    let Some(range) = char_range(&bytes, pos) else {
+        return (len + 1, len + 1).into_lua_multi(lua);
     };
 
-    let Some(start) = start else {
-        return mlua::Value::Nil.into_lua_multi(lua);
-    };
-
-    let end = s
-        .get(start..)
-        .and_then(|rest| rest.chars().next())
-        .map_or(start + 1, |c| start + c.len_utf8());
-
-    // translate back to 1-based indices and return
-    (start + 1, end).into_lua_multi(lua)
+    (range.start + 1, range.end).into_lua_multi(lua)
 }
 
 fn l_codepoint(
@@ -200,12 +218,12 @@ fn l_codepoint(
         Option<bool>,
     ),
 ) -> LuaResult<Variadic<LuaInteger>> {
-    let bytes = s.as_bytes().to_vec();
+    let bytes = s.as_bytes();
     let len = bytes.len();
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
     // NOTE: `luautf8` docs claim `j` defaults to `len` but it's actually `i`.
     let j = j.map_or(i, |j| normalize_lua_index(j, len));
-    let lax = lax.unwrap_or(false);
+    let strict = !lax.unwrap_or(false);
 
     if !(i >= 1) {
         return Err(bad_argument(
@@ -226,43 +244,21 @@ fn l_codepoint(
         return Ok(Variadic::new());
     }
 
-    let start = i - 1;
-    let end = j;
-    let mut result = Variadic::new();
-    let mut pos = start;
-    while pos < end {
-        let at = pos;
-        let (cp, consumed) = decode_utf8(&bytes[at..])
-            .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
-        pos += consumed;
-        if !lax && invalid_codepoint(cp) {
-            return Err(mlua::Error::runtime("invalid UTF-8 codepoint"));
-        }
-        result.push(cp as LuaInteger);
-    }
-
-    Ok(result)
+    CodePoints::range(&bytes, i - 1..j, strict)
+        .map(|(_, r)| r.map(|cp| cp as LuaInteger))
+        .collect::<Result<Variadic<_>, _>>()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))
 }
 
 fn l_codes(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<Function> {
-    let bytes = s.as_bytes().to_vec();
-    let len = bytes.len();
-    let lax = lax.unwrap_or(false);
+    let bytes = s.as_bytes();
+    let strict = !lax.unwrap_or(false);
 
-    let mut pos = 0;
-    lua.create_function_mut(move |lua, ()| {
-        if pos < len {
-            let at = pos;
-            let (cp, consumed) = decode_utf8(&bytes[at..])
-                .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
-            pos += consumed;
-            if !lax && invalid_codepoint(cp) {
-                return Err(mlua::Error::runtime("invalid UTF-8 codepoint"));
-            }
-            (at + 1, cp as LuaInteger).into_lua_multi(lua)
-        } else {
-            (Value::Nil,).into_lua_multi(lua)
-        }
+    let mut code_points = CodePoints::all(bytes, strict);
+    lua.create_function_mut(move |lua, ()| match code_points.next() {
+        Some((at, Ok(cp))) => (at + 1, cp as LuaInteger).into_lua_multi(lua),
+        Some((_, Err(_))) => Err(mlua::Error::runtime("invalid UTF-8 codepoint")),
+        None => (Value::Nil,).into_lua_multi(lua),
     })
 }
 
@@ -270,24 +266,15 @@ fn l_byte(
     _lua: &Lua,
     (s, start, end): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
 ) -> LuaResult<Variadic<LuaInteger>> {
-    let s = s
-        .to_str()
-        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-    let len = s.chars().count() as LuaInteger;
+    let bytes = s.as_bytes();
+    let start = start.unwrap_or(1);
+    let end = end.unwrap_or(start);
+    let range = lua_char_range_to_byte_range(&bytes, start, end);
 
-    let normalize = |idx: LuaInteger| if idx >= 0 { idx } else { len + idx + 1 };
-    let i = normalize(start.unwrap_or(1)).max(1);
-    let j = normalize(end.unwrap_or(start.unwrap_or(1))).min(len);
-
-    if i > j {
-        Ok(Variadic::new())
-    } else {
-        Ok(s.chars()
-            .skip((i - 1) as usize)
-            .take((j - i + 1) as usize)
-            .map(|ch| ch as LuaInteger)
-            .collect())
-    }
+    CodePoints::range(&bytes, range, false)
+        .map(|(_, r)| r.map(|cp| cp as LuaInteger))
+        .collect::<Result<Variadic<_>, _>>()
+        .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))
 }
 
 fn l_char(lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<LuaString> {
@@ -335,7 +322,7 @@ fn l_find(
     (s, pattern, init, plain): (String, String, Option<LuaInteger>, Option<bool>),
 ) -> LuaResult<MultiValue> {
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
-    let start_byte = match char_pos(s.as_bytes(), init as isize) {
+    let start_byte = match lua_char_index_to_byte_offset(s.as_bytes(), init) {
         Some(start) => start,
         None if init <= 0 => 0,
         None => return (mlua::Value::Nil,).into_lua_multi(lua),
@@ -511,27 +498,20 @@ fn l_len(
     let start = i - 1;
     let end = j;
 
-    let mut pos = start;
-    let mut result = 0;
-    while pos < end {
-        if lax {
-            let Some(next_pos) = next_char_position(&bytes, pos) else {
-                break;
-            };
-            result += 1;
-            pos = next_pos;
-        } else {
-            match decode_utf8(&bytes[pos..]) {
-                Ok((cp, consumed)) if !invalid_codepoint(cp) => {
-                    result += 1;
-                    pos += consumed;
-                }
-                _ => return (mlua::Nil, pos + 1).into_lua_multi(lua),
-            };
+    // NOTE: `luautf8` doesn't do any validation at all in `lax` mode, so even invalid RFC 2279 is
+    // allowed.
+    if lax {
+        let count = char_count(&bytes, start, end);
+        (count as LuaInteger).into_lua_multi(lua)
+    } else {
+        let count =
+            CodePoints::range(&bytes, start..end, true).try_fold(0usize, |n, r| r.1.map(|_| n + 1));
+
+        match count {
+            Ok(n) => (n as LuaInteger).into_lua_multi(lua),
+            Err(e) => (mlua::Nil, (e.offset + 1) as LuaInteger).into_lua_multi(lua),
         }
     }
-
-    (result,).into_lua_multi(lua)
 }
 
 fn l_match(
@@ -539,7 +519,7 @@ fn l_match(
     (s, pattern, init): (String, String, Option<LuaInteger>),
 ) -> LuaResult<MultiValue> {
     let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
-    let start_byte = match char_pos(s.as_bytes(), init as isize) {
+    let start_byte = match lua_char_index_to_byte_offset(s.as_bytes(), init) {
         Some(start) => start,
         None if init <= 0 => 0,
         None => return (mlua::Value::Nil,).into_lua_multi(lua),
@@ -580,22 +560,16 @@ fn l_reverse(lua: &Lua, (s, lax): (LuaString, Option<bool>)) -> LuaResult<LuaStr
 }
 
 fn l_sub(
-    _lua: &Lua,
-    (s, start, end): (String, LuaInteger, Option<LuaInteger>),
-) -> LuaResult<String> {
-    let len = s.chars().count() as LuaInteger;
+    lua: &Lua,
+    (s, start, end): (LuaString, LuaInteger, Option<LuaInteger>),
+) -> LuaResult<LuaString> {
+    let bytes = s.as_bytes();
+    let range = lua_char_range_to_byte_range(&bytes, start, end.unwrap_or(-1));
 
-    let normalize = |idx: LuaInteger| if idx >= 0 { idx } else { len + idx + 1 };
-    let i = normalize(start).max(1);
-    let j = normalize(end.unwrap_or(-1)).min(len);
-
-    if i > j {
-        Ok(String::new())
+    if range.is_empty() {
+        lua.create_string("")
     } else {
-        Ok(s.chars()
-            .skip((i - 1) as usize)
-            .take((j - i + 1) as usize)
-            .collect())
+        lua.create_string(&bytes[range])
     }
 }
 
@@ -606,7 +580,7 @@ fn l_escape(lua: &Lua, s: LuaString) -> LuaResult<LuaString> {
 
     while !input.is_empty() {
         let (cp, consumed) =
-            decode_utf8(input).map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+            decode(input, false).map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
 
         let bytes = &input[..consumed];
         input = &input[consumed..];
@@ -623,25 +597,25 @@ fn l_escape(lua: &Lua, s: LuaString) -> LuaResult<LuaString> {
 
             Some(b'0'..=b'9' | b'{') => {
                 let cp = parse_escaped_codepoint(&mut input, 10)?;
-                encode_utf8(cp, &mut result);
+                encode(cp, &mut result);
             }
 
             Some(b'u' | b'U') => {
                 input = &input[1..];
 
                 let cp = parse_escaped_codepoint(&mut input, 10)?;
-                encode_utf8(cp, &mut result);
+                encode(cp, &mut result);
             }
 
             Some(b'x' | b'X') => {
                 input = &input[1..];
 
                 let cp = parse_escaped_codepoint(&mut input, 16)?;
-                encode_utf8(cp, &mut result);
+                encode(cp, &mut result);
             }
 
             Some(_) => {
-                let (_, consumed) = decode_utf8(input)
+                let (_, consumed) = decode(input, false)
                     .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
 
                 result.extend_from_slice(&input[..consumed]);
@@ -783,60 +757,42 @@ fn l_next(
     let offset = o.map_or(1, |offset| normalize_lua_index(offset, len));
     let index = i.unwrap_or_else(|| if o.is_some() { 1 } else { 0 });
 
-    let position = if index == 0 {
-        if offset == 0 {
-            return (0, 0).into_lua_multi(lua);
-        } else {
-            char_start(&bytes, offset - 1)
+    let position = match (offset, index) {
+        (0, 0) => return (0, 0).into_lua_multi(lua),
+        (0, n) if n < 0 => return mlua::Nil.into_lua_multi(lua),
+        (0, n) => {
+            debug_assert!(n > 1);
+            let Some(pos) = move_by(&bytes, 0, (n - 1) as isize) else {
+                return mlua::Nil.into_lua_multi(lua);
+            };
+            pos
         }
-    } else {
-        if offset == 0 && index == 1 {
-            Some(0)
-        } else {
-            move_by_chars(&bytes, offset.max(1) - 1, index)
+        (o, 0) => {
+            debug_assert!(o > 0);
+            let Some(pos) = char_start(&bytes, o - 1) else {
+                return mlua::Nil.into_lua_multi(lua);
+            };
+            pos
+        }
+        (o, n) => {
+            debug_assert!(o > 0 && n != 0);
+            let Some(pos) = move_by(&bytes, o - 1, n as isize) else {
+                return mlua::Nil.into_lua_multi(lua);
+            };
+            pos
         }
     };
 
-    let Some(position) = position else {
+    if position == len {
         return mlua::Nil.into_lua_multi(lua);
-    };
+    }
 
-    let cp = match decode_utf8(&bytes[position..]) {
+    let cp = match decode(&bytes[position..], false) {
         Ok((cp, _)) => cp,
         Err(_) => 0,
     };
 
     (position + 1, cp).into_lua_multi(lua)
-}
-
-fn next_char_pos(bytes: &[u8]) -> Option<usize> {
-    bytes
-        .iter()
-        .enumerate()
-        .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
-        .map(|(i, _)| i)
-        .nth(1)
-}
-
-fn char_pos(bytes: &[u8], n: isize) -> Option<usize> {
-    if n >= 0 {
-        bytes
-            .iter()
-            .enumerate()
-            .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
-            .map(|(i, _)| i)
-            // char right after the end returns the length
-            .chain(std::iter::once(bytes.len()))
-            .nth((n - 1) as usize)
-    } else {
-        bytes
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|&(_, b)| b & 0b1100_0000 != 0b1000_0000)
-            .nth((-n - 1) as usize)
-            .map(|(i, _)| i)
-    }
 }
 
 fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaString> {
@@ -873,7 +829,7 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
         let at = if idx == 0 {
             s.len()
         } else {
-            char_pos(&s, idx as isize)
+            lua_char_index_to_byte_offset(&s, idx)
                 .ok_or_else(|| bad_argument("insert", 2, mlua::Error::runtime("invalid index")))?
         };
         buf.extend_from_slice(&s[..at]);
@@ -889,30 +845,27 @@ fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaStrin
 
 fn l_remove(
     lua: &Lua,
-    (s, i, j): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
+    (s, start, end): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
 ) -> LuaResult<LuaString> {
     let bytes = s.as_bytes();
-    let i = i.unwrap_or(-1);
-    let j = j.unwrap_or(-1);
+    let range = lua_char_range_to_byte_range(&bytes, start.unwrap_or(-1), end.unwrap_or(-1));
 
-    let start = char_pos(&bytes, i as isize).unwrap_or_else(|| if i > 0 { bytes.len() } else { 0 });
-    let end = char_pos(&bytes, j as isize).map_or_else(
-        || if i > 0 { bytes.len() } else { 0 },
-        |end| next_char_pos(&bytes[end..]).map_or(bytes.len(), |offset| end + offset),
-    );
-
-    if start > end {
+    if range.is_empty() {
         return Ok(s);
     }
 
     let mut buf = Vec::with_capacity(bytes.len());
-    buf.extend_from_slice(&bytes[..start]);
-    buf.extend_from_slice(&bytes[end..]);
+    buf.extend_from_slice(&bytes[..range.start]);
+    buf.extend_from_slice(&bytes[range.end..]);
 
     lua.create_string(buf)
 }
 
-fn ch_width(ch: char, ambi_width: usize, default_width: usize) -> usize {
+fn ch_width(cp: u32, ambi_width: usize, default_width: usize) -> usize {
+    let Some(ch) = char::from_u32(cp) else {
+        return 1;
+    };
+
     if CodePointSetData::new::<DefaultIgnorableCodePoint>().contains(ch) {
         return default_width;
     }
@@ -947,10 +900,8 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
 
     match first_arg {
         Value::String(lua_string) => {
-            let len = lua_string.as_bytes().len();
-            let s = lua_string
-                .to_str()
-                .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+            let bytes = lua_string.as_bytes();
+            let len = bytes.len();
             let i = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(1);
             let j = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(len as LuaInteger);
             let ambi_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(1) as usize;
@@ -975,30 +926,17 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
                 ));
             }
 
-            if i > j {
-                return Ok(0);
-            }
+            let width = CodePoints::range(&bytes, i - 1..j, false)
+                .map(|(_, r)| r.map(|cp| ch_width(cp, ambi_width, default_width)))
+                .sum::<Result<usize, _>>()
+                .map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
 
-            let start = i - 1;
-            let end = j;
-
-            let total = s
-                .get(start..end)
-                .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
-                .chars()
-                .fold(0, |acc, ch| acc + ch_width(ch, ambi_width, default_width));
-
-            Ok(total as LuaInteger)
+            Ok(width as LuaInteger)
         }
         Value::Integer(codepoint) => {
             let ambi_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(1) as usize;
             let default_width = next_optional::<LuaInteger>(lua, &mut args)?.unwrap_or(0) as usize;
-
-            let Some(ch) = char::from_u32(codepoint as u32) else {
-                return Ok(1);
-            };
-
-            Ok(ch_width(ch, ambi_width, default_width) as LuaInteger)
+            Ok(ch_width(codepoint as u32, ambi_width, default_width) as LuaInteger)
         }
         other => Err(mlua::Error::runtime(format!(
             "number/string expected, got {}",
@@ -1018,11 +956,8 @@ fn l_widthindex(
         Option<LuaInteger>,
     ),
 ) -> LuaResult<MultiValue> {
-    let len = s.as_bytes().len();
-    let s = s
-        .to_str()
-        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-
+    let bytes = s.as_bytes();
+    let len = bytes.len();
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
     let ambi_width = ambi_width.unwrap_or(1) as usize;
@@ -1048,25 +983,16 @@ fn l_widthindex(
         return 0.into_lua_multi(lua);
     }
 
-    let start = i - 1;
-    let end = j;
-
-    let chars = s
-        .get(start..end)
-        .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
-        .chars();
-
-    let mut index: LuaInteger = 0;
     let mut width = width;
-    for ch in chars {
-        let ch_width = ch_width(ch, ambi_width, default_width);
-
-        if width <= ch_width as LuaInteger {
-            return (index + 1, width, ch_width).into_lua_multi(lua);
+    let mut index: LuaInteger = 0;
+    for (_, cp) in CodePoints::range(&bytes, i - 1..j, false) {
+        let cp = cp.map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+        let w = ch_width(cp, ambi_width, default_width);
+        if width <= w as LuaInteger {
+            return (index + 1, width, w).into_lua_multi(lua);
         }
-
         index += 1;
-        width -= ch_width as LuaInteger;
+        width -= w as LuaInteger;
     }
 
     index.into_lua_multi(lua)
@@ -1083,11 +1009,8 @@ fn l_widthlimit(
         Option<LuaInteger>,
     ),
 ) -> LuaResult<MultiValue> {
-    let len = s.as_bytes().len();
-    let s = s
-        .to_str()
-        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
-
+    let bytes = s.as_bytes();
+    let len = bytes.len();
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
     let ambi_width = ambi_width.unwrap_or(1) as usize;
@@ -1119,48 +1042,41 @@ fn l_widthlimit(
 
     let start = i - 1;
     let end = j;
+
     let mut width = limit;
-    let chars = s
-        .get(start..end)
-        .ok_or_else(|| mlua::Error::runtime("invalid UTF-8 code"))?
-        .char_indices();
-
-    let mut pos = 0;
-
+    let mut it = CodePoints::range(&bytes, start..end, false);
     let index = if width >= 0 {
-        for (byte_pos, ch) in chars {
-            let ch_width = ch_width(ch, ambi_width, default_width);
-            if width < ch_width as LuaInteger {
+        let mut pos = start;
+        while width != 0 {
+            let Some((_, cp)) = it.next() else { break };
+            let cp = cp.map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
+
+            let w = ch_width(cp, ambi_width, default_width) as LuaInteger;
+            if width < w {
                 break;
             }
 
-            width -= ch_width as LuaInteger;
-            pos = byte_pos + ch.len_utf8();
-
-            if width == 0 {
-                break;
-            }
+            width -= w;
+            pos = it.remaining().start;
         }
-
-        start + pos
+        pos
     } else {
-        let mut pos = end - start;
+        let mut pos = end;
+        while width != 0 {
+            let Some((at, cp)) = it.next_back() else {
+                break;
+            };
+            let cp = cp.map_err(|_| mlua::Error::runtime("invalid UTF-8 codepoint"))?;
 
-        for (byte_pos, ch) in chars.rev() {
-            let ch_width = ch_width(ch, ambi_width, default_width);
-            if -width < ch_width as LuaInteger {
+            let w = ch_width(cp, ambi_width, default_width) as LuaInteger;
+            if -width < w {
                 break;
             }
 
-            width += ch_width as LuaInteger;
-            pos = byte_pos;
-
-            if width == 0 {
-                break;
-            }
+            width += w;
+            pos = at;
         }
-
-        start + pos + 1
+        pos + 1
     };
 
     (index, width).into_lua_multi(lua)
@@ -1303,10 +1219,6 @@ fn l_grapheme_indices(
 
     let start = i - 1;
     let end = j;
-
-    if !s.is_char_boundary(start) {
-        return Err(mlua::Error::runtime("invalid UTF-8 code"));
-    }
 
     let mut pos = start;
     lua.create_function_mut(move |lua, ()| {
