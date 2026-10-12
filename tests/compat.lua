@@ -194,11 +194,12 @@ do
   eq(utf8.offset(S, 7, -1), nil)
   eq(utf8.offset(S, 11, -1), nil)
 
-  -- accepts invalid utf8
+  -- accepts invalid encodings
   assert_array({ utf8.offset("안\xFF녕", 3) }, { 5, 7 }) -- invalid leading byte
   assert_array({ utf8.offset("안\xC0\xAF녕", 3) }, { 6, 8 }) -- overlong
   assert_array({ utf8.offset("\x80\x80\x80", 0, 2) }, { 1, 3 }) -- starts with continuation bytes
-  -- accepts valid utf8 with surrogates and code points above 0x10FFFF
+
+  -- accepts surrogates and code points above 0x10FFFF
   assert_array({ utf8.offset("안\xED\xA0\x80녕", 3) }, { 7, 9 })
   assert_array({ utf8.offset("안\xF8\x88\x80\x80\x80녕", 3) }, { 9, 11 })
 end
@@ -213,9 +214,6 @@ do
   eq(utf8.codepoint(S, 7), 0x1F642)
   eq(utf8.codepoint(S, 11), 0x42)
 
-  assert_array({ utf8.codepoint(S, 1, 11) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
-  assert_array({ utf8.codepoint(S, 2, 6) }, { 0xE9, 0x4E2D })
-
   -- negative byte indices
   eq(utf8.codepoint(S, -1), 0x42)
   eq(utf8.codepoint(S, -5), 0x1F642)
@@ -223,45 +221,46 @@ do
   eq(utf8.codepoint(S, -10), 0xE9)
   eq(utf8.codepoint(S, -11), 0x41)
 
+  -- byte ranges
+  assert_array({ utf8.codepoint(S, 1, 11) }, { 0x41, 0xE9, 0x4E2D, 0x1F642, 0x42 })
+  assert_array({ utf8.codepoint(S, 2, 6) }, { 0xE9, 0x4E2D })
   assert_array({ utf8.codepoint(S, -5, -1) }, { 0x1F642, 0x42 })
+  assert_array({ utf8.codepoint(S, -11, -5) }, { 0x41, 0xE9, 0x4E2D, 0x1F642 })
+  assert_array({ utf8.codepoint(S, -5, 11) }, { 0x1F642, 0x42 })
+  assert_array({ utf8.codepoint(S, 11, -1) }, { 0x42 })
+
+  -- empty ranges
+  eq(select("#", utf8.codepoint(S, 1, 0)), 0)
+  eq(select("#", utf8.codepoint(S, 5, 4)), 0)
 
   -- zero is invalid as a byte position
   raises(function() utf8.codepoint(S, 0) end)
-  raises(function() utf8.codepoint(S, 12) end)
-
-  -- empty interval
-  eq(utf8.codepoint(S, 5, 4), nil)
-
-  -- invalid sequences
-  raises(function() utf8.codepoint("\xFF") end)
-
-  -- lax
-  eq(utf8.codepoint(utf8.char(0xD800), 1, 1, true), 0xD800)
-  eq(utf8.codepoint(utf8.char(0xFF), 1, 1, true), 0xFF)
-
-  -- empty ranges return no code points
-  eq(select("#", utf8.codepoint(S, 5, 4)), 0)
 
   -- positions that fall inside a sequence are errors
   raises(function() utf8.codepoint(S, 3) end)
   raises(function() utf8.codepoint(S, 6) end)
   raises(function() utf8.codepoint(S, 0, 3) end)
 
-  -- lax mode accepts surrogates but still rejects overlong forms
-  eq(utf8.codepoint(utf8.char(0xD800), 1, 1, true), 0xD800)
-  raises(function() utf8.codepoint(utf8.char(0xD800), 1, 1) end)
+  -- surrogates and code points above 0x10FFFF are rejected
+  raises(function() utf8.codepoint("\xED\xA0\x80", 1, 1) end)
+  raises(function() utf8.codepoint("\xF8\x88\x80\x80\x80", 1, 1) end)
+
+  -- lax mode accepts them
+  eq(utf8.codepoint("\xED\xA0\x80", 1, 1, true), 0xD800)
+  eq(utf8.codepoint("\xF8\x88\x80\x80\x80", 1, 1, true), 0x200000)
+
+  -- lax mode rejects invalid encodings
+  raises(function() utf8.codepoint("\xFF", 1, 1, true) end)
   raises(function() utf8.codepoint("\xC0\x80", 1, 1, true) end)
   raises(function() utf8.codepoint("\xF0\x80\x80\x80", 1, 1, true) end)
-
-  -- negative byte range
-  assert_array({ utf8.codepoint(S, -11, -5) }, { 0x41, 0xE9, 0x4E2D, 0x1F642 })
-
-  -- an empty range at the start
-  eq(select("#", utf8.codepoint(S, 1, 0)), 0)
+  raises(function() utf8.codepoint("\x80\x80\x80\x80", 1, 1, true) end)
 
   -- out-of-range byte positions are rejected
+  raises(function() utf8.codepoint(S, -100) end)
   raises(function() utf8.codepoint(S, -12) end)
+  raises(function() utf8.codepoint(S, 12) end)
   raises(function() utf8.codepoint(S, 13) end)
+  raises(function() utf8.codepoint(S, 100) end)
   raises(function() utf8.codepoint(S, -1, 12) end)
 end
 
@@ -269,37 +268,32 @@ end
 
 -- utf8.codes
 do
-  local expected = {
+  assert_array(collect_codes(S), {
     { 1,  0x41 },
     { 2,  0xE9 },
     { 4,  0x4E2D },
     { 7,  0x1F642 },
     { 11, 0x42 },
-  }
+  })
 
-  local got = collect_codes(S)
-  assert_array(got, expected)
-
-  local got2 = {}
-  for p, cp in utf8.codes("é🙂") do
-    got2[#got2 + 1] = { p, cp }
-  end
-  assert_array(got2, {
+  assert_array(collect_codes("é🙂"), {
     { 1, 0xE9 },
     { 3, 0x1F642 },
   })
 
-  raises(function() collect_codes(utf8.char(0xD800)) end)
-  raises(function() collect_codes("\xFF") end)
+  -- surrogates and code points above 0x10FFFF are rejected
+  raises(function() collect_codes("\xED\xA0\x80") end)
+  raises(function() collect_codes("\xF8\x88\x80\x80\x80") end)
 
-  -- lax
-  local got3 = collect_codes(utf8.char(0xD800), true)
-  assert_array(got3, {
-      { 1, 0xD800 }
-  })
+  -- lax mode accepts them
+  assert_array(collect_codes("\xED\xA0\x80", true), { { 1, 0xD800 } })
+  assert_array(collect_codes("\xF8\x88\x80\x80\x80", true), { { 1, 0x200000 } })
 
-  -- reject out of range codepoint even with lax
+  -- lax mode rejects invalid encodings
   raises(function() collect_codes("\xFF", true) end)
+  raises(function() collect_codes("\xC0\x80", true) end)
+  raises(function() collect_codes("\xF0\x80\x80\x80", true) end)
+  raises(function() collect_codes("\x80\x80\x80\x80", true) end)
 end
 
 ---
@@ -358,7 +352,7 @@ do
   eq(string.char(utf8.byte(nul, 1, -1)), nul)
 
   -- raises error on invalid utf8
-  raises(function() utf8.byte("\xFF") end) -- invalid leading byte
+  raises(function() utf8.byte("\xFF") end)     -- invalid leading byte
   raises(function() utf8.byte("\xC0\xAF") end) -- overlong
   -- but accepts surrogates and code points above 0x10FFFF
   eq(utf8.byte("\xED\xA0\x80"), 55296)
@@ -469,8 +463,17 @@ do
 
   -- every byte position as the initial index
   local len_expected = {
-    [-11] = 5, [-10] = 4, [-8] = 3, [-5] = 2, [-1] = 1,
-    [1] = 5, [2] = 4, [4] = 3, [7] = 2, [11] = 1, [12] = 0,
+    [-11] = 5,
+    [-10] = 4,
+    [-8] = 3,
+    [-5] = 2,
+    [-1] = 1,
+    [1] = 5,
+    [2] = 4,
+    [4] = 3,
+    [7] = 2,
+    [11] = 1,
+    [12] = 0,
   }
   for i = -11, 12 do
     if len_expected[i] ~= nil then
@@ -480,13 +483,21 @@ do
 
   -- positions that start in the middle of a sequence report the bad offset
   local len_mid = {
-    [-9] = 3, [-7] = 5, [-6] = 6, [-4] = 8, [-3] = 9, [-2] = 10,
-    [3] = 3, [5] = 5, [6] = 6, [8] = 8, [9] = 9, [10] = 10,
+    [-9] = 3,
+    [-7] = 5,
+    [-6] = 6,
+    [-4] = 8,
+    [-3] = 9,
+    [-2] = 10,
+    [3] = 3,
+    [5] = 5,
+    [6] = 6,
+    [8] = 8,
+    [9] = 9,
+    [10] = 10,
   }
   for i, pos in pairs(len_mid) do
-    n, e = utf8.len(S, i)
-    eq(n, nil, "utf8.len mid-sequence " .. i)
-    eq(e, pos, "utf8.len mid-sequence offset " .. i)
+    assert_array({ utf8.len(S, i) }, { nil, pos })
   end
 
   -- zero and positions beyond either end are rejected
@@ -568,8 +579,8 @@ do
   eq(utf8.sub(EMPTY, 100, -100), EMPTY)
 
   -- accepts invalid utf8
-  eq(utf8.sub("a\xFFb", 2), "\xFFb") -- invalid leading byte
-  eq(utf8.sub("a\xC0\xAFb", 2), "\xC0\xAFb") -- overlong
+  eq(utf8.sub("a\xFFb", 2), "\xFFb")                -- invalid leading byte
+  eq(utf8.sub("a\xC0\xAFb", 2), "\xC0\xAFb")        -- overlong
   eq(utf8.sub("\x80\x80\x80b", 1), "\x80\x80\x80b") -- starts with continuation bytes
   -- accepts valid utf8 with surrogates and code points above 0x10FFFF
   eq(utf8.sub("a\xED\xA0\x80b", 2), "\xED\xA0\x80b")
@@ -584,104 +595,47 @@ do
   eq(a, 1)
   eq(b, 1)
 
-  a, b = utf8.find(S, E_ACUTE)
-  eq(a, 2)
-  eq(b, 2)
-
-  a, b = utf8.find(S, CJK)
-  eq(a, 3)
-  eq(b, 3)
-
-  a, b = utf8.find(S, EMOJI)
-  eq(a, 4)
-  eq(b, 4)
-
-  a, b = utf8.find(S, B)
-  eq(a, 5)
-  eq(b, 5)
+  assert_array({ utf8.find(S, E_ACUTE) }, { 2, 2 })
+  assert_array({ utf8.find(S, CJK) }, { 3, 3 })
+  assert_array({ utf8.find(S, EMOJI) }, { 4, 4 })
+  assert_array({ utf8.find(S, B) }, { 5, 5 })
 
   -- literal search
-  a, b = utf8.find(S, "é中")
-  eq(a, 2)
-  eq(b, 3)
+  assert_array({ utf8.find(S, "é中") }, { 2, 3 })
 
   -- empty pattern
-  a, b = utf8.find(S, "")
-  eq(a, 1)
-  eq(b, 0)
+  assert_array({ utf8.find(S, "") }, { 1, 0 })
 
   -- returns nil if not found
   eq(utf8.find(S, "not present"), nil)
 
   -- positive character-index init
-  a, b = utf8.find(S, A, 1)
-  eq(a, 1)
-  eq(b, 1)
-
-  a, b = utf8.find(S, A, 2)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, B, 5)
-  eq(a, 5)
-  eq(b, 5)
-
-  a, b = utf8.find(S, B, 6)
-  eq(a, nil)
-  eq(b, nil)
+  assert_array({ utf8.find(S, A, 1) }, { 1, 1 })
+  assert_array({ utf8.find(S, A, 2) }, { nil, nil })
+  assert_array({ utf8.find(S, B, 5) }, { 5, 5 })
+  assert_array({ utf8.find(S, B, 6) }, { nil, nil })
 
   -- accepts zero
-  a, b = utf8.find(S, A, 0)
-  eq(a, 1)
-  eq(b, 1)
+  assert_array({ utf8.find(S, A, 0) }, { 1, 1 })
 
   -- negative character-index init
-  a, b = utf8.find(S, A, -5)
-  eq(a, 1)
-  eq(b, 1)
-
-  a, b = utf8.find(S, A, -4)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, B, -1)
-  eq(a, 5)
-  eq(b, 5)
-
-  a, b = utf8.find(S, EMOJI, -2)
-  eq(a, 4)
-  eq(b, 4)
-
-  a, b = utf8.find(S, B, -6)
-  eq(a, 5)
-  eq(b, 5)
+  assert_array({ utf8.find(S, A, -5) }, { 1, 1 })
+  assert_array({ utf8.find(S, A, -4) }, { nil, nil })
+  assert_array({ utf8.find(S, B, -1) }, { 5, 5 })
+  assert_array({ utf8.find(S, EMOJI, -2) }, { 4, 4 })
+  assert_array({ utf8.find(S, B, -6) }, { 5, 5 })
 
   -- anchored
-  a, b = utf8.find(S, "^A")
-  eq(a, 1)
-  eq(b, 1)
-
-  a, b = utf8.find(S, "^B")
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(B..S, "B$")
-  eq(a, 6)
-  eq(b, 6)
+  assert_array({ utf8.find(S, "^A") }, { 1, 1 })
+  assert_array({ utf8.find(S, "^B") }, { nil, nil })
+  assert_array({ utf8.find(B .. S, "B$") }, { 6, 6 })
 
   -- anchors at init position
-  a, b = utf8.find(A..S, "^A", 2)
-  eq(a, 2)
-  eq(b, 2)
+  assert_array({ utf8.find(A .. S, "^A", 2) }, { 2, 2 })
 
   -- plain mode
-  a, b = utf8.find("a.b", ".", 1, true)
-  eq(a, 2)
-  eq(b, 2)
-
-  a, b = utf8.find("a.b", ".", 1, false)
-  eq(a, 1)
-  eq(b, 1)
+  assert_array({ utf8.find("a.b", ".", 1, true) }, { 2, 2 })
+  assert_array({ utf8.find("a.b", ".", 1, false) }, { 1, 1 })
 
   -- a pattern without captures yields exactly the start and end positions
   eq(select("#", utf8.find(S, A)), 2)
@@ -699,66 +653,43 @@ do
   raises(function() utf8.find("abc", "[") end)
 
   -- out-of-range inits clamp towards the start for negative values
-  a, b = utf8.find(S, A, 100)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, A, -100)
-  eq(a, 1)
-  eq(b, 1)
-
-  a, b = utf8.find(S, B, 100)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, B, -100)
-  eq(a, 5)
-  eq(b, 5)
+  assert_array({ utf8.find(S, A, 100) }, { nil, nil })
+  assert_array({ utf8.find(S, A, -100) }, { 1, 1 })
+  assert_array({ utf8.find(S, B, 100) }, { nil, nil })
+  assert_array({ utf8.find(S, B, -100) }, { 5, 5 })
 
   -- plain search honors init as well
-  a, b = utf8.find(S, B, -1, true)
-  eq(a, 5)
-  eq(b, 5)
-
-  a, b = utf8.find(S, A, 2, true)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, A, 0, true)
-  eq(a, 1)
-  eq(b, 1)
+  assert_array({ utf8.find(S, B, -1, true) }, { 5, 5 })
+  assert_array({ utf8.find(S, A, 2, true) }, { nil, nil })
+  assert_array({ utf8.find(S, A, 0, true) }, { 1, 1 })
 
   -- the empty pattern reports the init and the character before it
-  a, b = utf8.find(S, "", 6)
-  eq(a, 6)
-  eq(b, 5)
-
-  a, b = utf8.find(S, "", 7)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, "", -1)
-  eq(a, 5)
-  eq(b, 4)
+  assert_array({ utf8.find(S, "", 6) }, { 6, 5 })
+  assert_array({ utf8.find(S, "", 7) }, { nil, nil })
+  assert_array({ utf8.find(S, "", -1) }, { 5, 4 })
 
   -- an anchor matches at the init position
-  a, b = utf8.find(S, "^B", 5)
-  eq(a, 5)
-  eq(b, 5)
-
-  a, b = utf8.find(S, "^B", 6)
-  eq(a, nil)
-  eq(b, nil)
-
-  a, b = utf8.find(S, "^A", -5)
-  eq(a, 1)
-  eq(b, 1)
+  assert_array({ utf8.find(S, "^B", 5) }, { 5, 5 })
+  assert_array({ utf8.find(S, "^B", 6) }, { nil, nil })
+  assert_array({ utf8.find(S, "^A", -5) }, { 1, 1 })
 
   -- literal and plain searches clamp negative inits to the start
   local find_cjk = {
-    [-7] = 3, [-6] = 3, [-5] = 3, [-4] = 3, [-3] = 3,
-    [-2] = nil, [-1] = nil, [0] = 3, [1] = 3, [2] = 3, [3] = 3,
-    [4] = nil, [5] = nil, [6] = nil, [7] = nil,
+    [-7] = 3,
+    [-6] = 3,
+    [-5] = 3,
+    [-4] = 3,
+    [-3] = 3,
+    [-2] = nil,
+    [-1] = nil,
+    [0] = 3,
+    [1] = 3,
+    [2] = 3,
+    [3] = 3,
+    [4] = nil,
+    [5] = nil,
+    [6] = nil,
+    [7] = nil,
   }
   for init = -7, 7 do
     a, b = utf8.find(S, CJK, init)
@@ -770,8 +701,17 @@ do
 
   -- pattern searches for every in-range init
   local find_dot = {
-    [-5] = 1, [-4] = 2, [-3] = 3, [-2] = 4, [-1] = 5,
-    [0] = 1, [1] = 1, [2] = 2, [3] = 3, [4] = 4, [5] = 5,
+    [-5] = 1,
+    [-4] = 2,
+    [-3] = 3,
+    [-2] = 4,
+    [-1] = 5,
+    [0] = 1,
+    [1] = 1,
+    [2] = 2,
+    [3] = 3,
+    [4] = 4,
+    [5] = 5,
   }
   for init = -5, 5 do
     a, b = utf8.find(S, ".", init)
@@ -779,9 +719,7 @@ do
     eq(b, find_dot[init], "find pattern end " .. init)
   end
 
-  a, b = utf8.find(S, ".", 6)
-  eq(a, nil)
-  eq(b, nil)
+  assert_array({ utf8.find(S, ".", 6) }, { nil, nil })
 end
 
 ---
@@ -800,28 +738,19 @@ do
   eq(utf8.match(S, "B", 6), nil)
   eq(utf8.match(S, "B", 0), B)
 
-  local x, y = utf8.match("abcabc", "(abc)", 4)
-  eq(x, "abc")
-  eq(y, nil)
+  assert_array({ utf8.match("abcabc", "(abc)", 4) }, { "abc", nil })
 
   -- captures containing multibyte characters
-  local p, q = utf8.match("é中🙂", "^(..)(.)$")
-  eq(p, "é中")
-  eq(q, "🙂")
+  assert_array({ utf8.match("é中🙂", "^(..)(.)$") }, { "é中", "🙂" })
 
   -- match returns the whole match or the captures, never the positions.
   eq(select("#", utf8.match(S, A)), 1)
   eq(select("#", utf8.match(S, "(A)")), 1)
 
-  local m1, m2, m3 = utf8.match("ab", "((a)(b))")
-  eq(m1, "ab")
-  eq(m2, "a")
-  eq(m3, "b")
+  assert_array({ utf8.match("ab", "((a)(b))") }, { "ab", "a", "b" })
 
   -- position captures are integers
-  p, q = utf8.match("abc", "()b()")
-  eq(p, 2)
-  eq(q, 3)
+  assert_array({ utf8.match("abc", "()b()") }, { 2, 3 })
 
   -- an init past the last character yields nil
   eq(utf8.match(S, A, 12), nil)
@@ -898,120 +827,52 @@ end
 
 -- utf8.gsub
 do
-  local r, n = utf8.gsub(S, ".", "x")
-  eq(r, "xxxxx")
-  eq(n, 5)
-
-  r, n = utf8.gsub(S, "(.)", "%1%1")
-  eq(r, "AAéé中中🙂🙂BB")
-  eq(n, 5)
-
-  r, n = utf8.gsub(S, "é", "E")
-  eq(r, "AE中🙂B")
-  eq(n, 1)
-
-  r, n = utf8.gsub(S, "🙂", "X")
-  eq(r, "Aé中XB")
-  eq(n, 1)
-
-  r, n = utf8.gsub(S, ".", "x", 2)
-  eq(r, "xx中🙂B")
-  eq(n, 2)
-
-  r, n = utf8.gsub(S, ".", "x", 0)
-  eq(r, S)
-  eq(n, 0)
-
-  r, n = utf8.gsub(S, ".", "x", -1)
-  eq(r, S)
-  eq(n, 0)
+  assert_array({ utf8.gsub(S, ".", "x") }, { "xxxxx", 5 })
+  assert_array({ utf8.gsub(S, "(.)", "%1%1") }, { "AAéé中中🙂🙂BB", 5 })
+  assert_array({ utf8.gsub(S, "é", "E") }, { "AE中🙂B", 1 })
+  assert_array({ utf8.gsub(S, "🙂", "X") }, { "Aé中XB", 1 })
+  assert_array({ utf8.gsub(S, ".", "x", 2) }, { "xx中🙂B", 2 })
+  assert_array({ utf8.gsub(S, ".", "x", 0) }, { S, 0 })
+  assert_array({ utf8.gsub(S, ".", "x", -1) }, { S, 0 })
 
   -- empty matches at beginning/end and between characters
-  r, n = utf8.gsub("abc", "", "x")
-  eq(r, "xaxbxcx")
-  eq(n, 4)
-
-  r, n = utf8.gsub("", "", "x")
-  eq(r, "x")
-  eq(n, 1)
+  assert_array({ utf8.gsub("abc", "", "x") }, { "xaxbxcx", 4 })
+  assert_array({ utf8.gsub("", "", "x") }, { "x", 1 })
 
   -- function replacement
-  r, n = utf8.gsub(S, ".", function(c)
-    return utf8.upper(c)
-  end)
-  eq(r, "AÉ中🙂B")
-  eq(n, 5)
+  assert_array({ utf8.gsub(S, ".", function(c) return utf8.upper(c) end) }, { "AÉ中🙂B", 5 })
 
   -- table replacement
-  r, n = utf8.gsub("aéa", "(.)", { a = "A", ["é"] = "E" })
-  eq(r, "AEA")
-  eq(n, 3)
+  assert_array({ utf8.gsub("aéa", "(.)", { a = "A", ["é"] = "E" }) }, { "AEA", 3 })
 
   -- false/nil table replacements don't replace.
-  r, n = utf8.gsub("abc", "(.)", { a = false, b = nil, c = "C" })
-  eq(r, "abC")
-  eq(n, 3)
+  assert_array({ utf8.gsub("abc", "(.)", { a = false, b = nil, c = "C" }) }, { "abC", 3 })
 
   -- replacement escapes
-  r, n = utf8.gsub("abc", "(.)", "%1%0")
-  eq(r, "aabbcc")
-  eq(n, 3)
+  assert_array({ utf8.gsub("abc", "(.)", "%1%0") }, { "aabbcc", 3 })
 
   -- invalid capture indices
   raises(function() utf8.gsub("abc", "(.)", "%2") end)
   raises(function() utf8.gsub("abc", "(%1)", "x") end)
 
   -- anchors apply at most once
-  r, n = utf8.gsub("abc", "^", "X")
-  eq(r, "Xabc")
-  eq(n, 1)
-
-  r, n = utf8.gsub("abc", "$", "X")
-  eq(r, "abcX")
-  eq(n, 1)
-
-  r, n = utf8.gsub("aaa", "^a", "X")
-  eq(r, "Xaa")
-  eq(n, 1)
-
-  r, n = utf8.gsub("aaa", "a$", "X")
-  eq(r, "aaX")
-  eq(n, 1)
+  assert_array({ utf8.gsub("abc", "^", "X") }, { "Xabc", 1 })
+  assert_array({ utf8.gsub("abc", "$", "X") }, { "abcX", 1 })
+  assert_array({ utf8.gsub("aaa", "^a", "X") }, { "Xaa", 1 })
+  assert_array({ utf8.gsub("aaa", "a$", "X") }, { "aaX", 1 })
 
   -- numeric replacement results are stringified
-  r, n = utf8.gsub("ab", ".", function()
-    return 5
-  end)
-  eq(r, "55")
-  eq(n, 2)
-
-  r, n = utf8.gsub("aé", "(.)", { a = 1, ["é"] = 2.2 })
-  eq(r, "12.2")
-  eq(n, 2)
+  assert_array({ utf8.gsub("ab", ".", function() return 5 end) }, { "55", 2 })
+  assert_array({ utf8.gsub("aé", "(.)", { a = 1, ["é"] = 2.2 }) }, { "12.2", 2 })
 
   -- booleans (other than false/nil) are rejected
-  raises(function()
-    utf8.gsub("ab", ".", function()
-      return true
-    end)
-  end)
+  raises(function() utf8.gsub("ab", ".", function() return true end) end)
 
   -- replacement counts are clamped to the number of matches
-  r, n = utf8.gsub(S, ".", "x", 4)
-  eq(r, "xxxxB")
-  eq(n, 4)
-
-  r, n = utf8.gsub(S, ".", "x", 5)
-  eq(r, "xxxxx")
-  eq(n, 5)
-
-  r, n = utf8.gsub(S, ".", "x", 100)
-  eq(r, "xxxxx")
-  eq(n, 5)
-
-  r, n = utf8.gsub(S, ".", "x", -2)
-  eq(r, S)
-  eq(n, 0)
+  assert_array({ utf8.gsub(S, ".", "x", 4) }, { "xxxxB", 4 })
+  assert_array({ utf8.gsub(S, ".", "x", 5) }, { "xxxxx", 5 })
+  assert_array({ utf8.gsub(S, ".", "x", 100) }, { "xxxxx", 5 })
+  assert_array({ utf8.gsub(S, ".", "x", -2) }, { S, 0 })
 end
 
 ---
@@ -1183,7 +1044,7 @@ do
   raises(function() utf8.escape("%x{xyz}") end)
 
   -- raises error on invalid utf8
-  raises(function() utf8.escape("\xFF") end) -- invalid leading byte
+  raises(function() utf8.escape("\xFF") end)     -- invalid leading byte
   raises(function() utf8.escape("\xC0\xAF") end) -- overlong
   -- but accepts surrogates and code points above 0x10FFFF
   eq(utf8.escape("%x{41}\xED\xA0\x80"), "A\xED\xA0\x80")
@@ -1194,155 +1055,75 @@ end
 
 -- utf8.charpos
 do
-  local p, cp = utf8.charpos(S)
-  eq(p, 1)
-  eq(cp, 0x41)
+  assert_array({ utf8.charpos(S) }, { 1, 0x41 })
 
-  p, cp = utf8.charpos(S, 1)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.charpos(S, 2)
-  eq(p, 2)
-  eq(cp, 0xE9)
-
-  p, cp = utf8.charpos(S, 3)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
-
-  p, cp = utf8.charpos(S, 4)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.charpos(S, 5)
-  eq(p, 11)
-  eq(cp, 0x42)
+  assert_array({ utf8.charpos(S, 1) }, { 1, 0x41 })
+  assert_array({ utf8.charpos(S, 2) }, { 2, 0xE9 })
+  assert_array({ utf8.charpos(S, 3) }, { 4, 0x4E2D })
+  assert_array({ utf8.charpos(S, 4) }, { 7, 0x1F642 })
+  assert_array({ utf8.charpos(S, 5) }, { 11, 0x42 })
 
   -- negative character positions
-  p, cp = utf8.charpos(S, -1)
-  eq(p, 11)
-  eq(cp, 0x42)
+  assert_array({ utf8.charpos(S, -1) }, { 11, 0x42 })
+  assert_array({ utf8.charpos(S, -2) }, { 7, 0x1F642 })
+  assert_array({ utf8.charpos(S, -5) }, { 1, 0x41 })
+  assert_array({ utf8.charpos(S, 0) }, { 1, 0x41 })
+  assert_array({ utf8.charpos(S, 6) }, { nil, nil })
 
-  p, cp = utf8.charpos(S, -2)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.charpos(S, -5)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.charpos(S, 0)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.charpos(S, 6)
-  eq(p, nil)
-  eq(cp, nil)
-
-  -- i is BYTE position, n is character count
-  p, cp = utf8.charpos(S, 1, 1)
-  eq(p, 2)
-  eq(cp, 0xE9)
-
-  p, cp = utf8.charpos(S, 1, 2)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
-
-  p, cp = utf8.charpos(S, 1, 3)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.charpos(S, 1, 4)
-  eq(p, 11)
-  eq(cp, 0x42)
-
-  p, cp = utf8.charpos(S, 1, 5)
-  eq(p, nil)
-  eq(cp, nil)
+  -- i is byte position, n is character count
+  assert_array({ utf8.charpos(S, 1, 1) }, { 2, 0xE9 })
+  assert_array({ utf8.charpos(S, 1, 2) }, { 4, 0x4E2D })
+  assert_array({ utf8.charpos(S, 1, 3) }, { 7, 0x1F642 })
+  assert_array({ utf8.charpos(S, 1, 4) }, { 11, 0x42 })
+  assert_array({ utf8.charpos(S, 1, 5) }, { nil, nil })
 
   -- negative n
-  p, cp = utf8.charpos(S, 11, -1)
-  eq(p, 7)
-  eq(cp, 0x1F642)
-
-  p, cp = utf8.charpos(S, 7, -1)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
-
-  p, cp = utf8.charpos(S, 4, -1)
-  eq(p, 2)
-  eq(cp, 0xE9)
+  assert_array({ utf8.charpos(S, 11, -1) }, { 7, 0x1F642 })
+  assert_array({ utf8.charpos(S, 7, -1) }, { 4, 0x4E2D })
+  assert_array({ utf8.charpos(S, 4, -1) }, { 2, 0xE9 })
 
   -- zero n
-  p, cp = utf8.charpos(S, 7, 0)
-  eq(p, 7)
-  eq(cp, 0x1F642)
+  assert_array({ utf8.charpos(S, 7, 0) }, { 7, 0x1F642 })
+  assert_array({ utf8.charpos(S, 0, 0) }, { 1, 0x41 })
+
+  -- i == nil
+  assert_array({ utf8.charpos(S, nil, 2) }, { 4, 0x4E2D })
+  assert_array({ utf8.charpos(S, nil, 0) }, { 1, 0x41 })
 
   -- i inside a character
-  p, cp = utf8.charpos(S, 3, 1)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
+  assert_array({ utf8.charpos(S, 3, 1) }, { 4, 0x4E2D })
 
   -- out of range
-  p, cp = utf8.charpos(S, 12, 1)
-  eq(p, nil)
-  eq(cp, nil)
-
-  p, cp = utf8.charpos(S, 1, 100)
-  eq(p, nil)
-  eq(cp, nil)
+  assert_array({ utf8.charpos(S, 12, 1) }, { nil, nil })
+  assert_array({ utf8.charpos(S, 1, 100) }, { nil, nil })
 
   -- every negative character position, and positions beyond the end
-  p, cp = utf8.charpos(S, -3)
-  eq(p, 4)
-  eq(cp, 0x4E2D)
-
-  p, cp = utf8.charpos(S, -4)
-  eq(p, 2)
-  eq(cp, 0xE9)
-
-  p, cp = utf8.charpos(S, -6)
-  eq(p, nil)
-  eq(cp, nil)
-
-  p, cp = utf8.charpos(S, 7)
-  eq(p, nil)
-  eq(cp, nil)
+  assert_array({ utf8.charpos(S, -3) }, { 4, 0x4E2D })
+  assert_array({ utf8.charpos(S, -4) }, { 2, 0xE9 })
+  assert_array({ utf8.charpos(S, -6) }, { nil, nil })
+  assert_array({ utf8.charpos(S, 7) }, { nil, nil })
 
   -- out-of-range n with an explicit byte position
-  p, cp = utf8.charpos(S, 1, 6)
-  eq(p, nil)
-  eq(cp, nil)
-
-  p, cp = utf8.charpos(S, 1, -1)
-  eq(p, nil)
-  eq(cp, nil)
-
-  p, cp = utf8.charpos(S, 11, 1)
-  eq(p, nil)
-  eq(cp, nil)
+  assert_array({ utf8.charpos(S, 1, 6) }, { nil, nil })
+  assert_array({ utf8.charpos(S, 1, -1) }, { nil, nil })
+  assert_array({ utf8.charpos(S, 11, 1) }, { nil, nil })
 
   -- byte positions past the end still walk backwards
-  p, cp = utf8.charpos(S, 12, -1)
-  eq(p, 11)
-  eq(cp, 0x42)
-
-  p, cp = utf8.charpos(S, 12, -5)
-  eq(p, 1)
-  eq(cp, 0x41)
-
-  p, cp = utf8.charpos(S, 12, 0)
-  eq(p, nil)
-  eq(cp, nil)
+  assert_array({ utf8.charpos(S, 12, -1) }, { 11, 0x42 })
+  assert_array({ utf8.charpos(S, 12, -5) }, { 1, 0x41 })
+  assert_array({ utf8.charpos(S, 12, 0) }, { nil, nil })
 
   -- zero and negative byte positions clamp to the first byte
-  p, cp = utf8.charpos(S, 0, 1)
-  eq(p, 2)
-  eq(cp, 0xE9)
+  assert_array({ utf8.charpos(S, 0, 1) }, { 2, 0xE9 })
+  assert_array({ utf8.charpos(S, -11, 1) }, { 2, 0xE9 })
 
-  p, cp = utf8.charpos(S, -11, 1)
-  eq(p, 2)
-  eq(cp, 0xE9)
+  -- accepts surrogates and code points above 0x10FFFF
+  assert_array({ utf8.charpos("\xED\xA0\x80", 1) }, { 1, 0xD800 })
+  assert_array({ utf8.charpos("\xF8\x88\x80\x80\x80", 1) }, { 1, 0x200000 })
+
+  -- returns zero for invalid encodings
+  assert_array({ utf8.charpos("\xFF", 1) }, { 1, 0 }) -- invalid leading byte
+  assert_array({ utf8.charpos("\xC0\xAF", 1) }, { 1, 0 }) -- overlong
 end
 
 ---
@@ -1512,10 +1293,21 @@ do
 
   -- single index removes from that character through the end
   local remove_from = {
-    [-7] = EMPTY, [-6] = EMPTY, [-5] = EMPTY,
-    [-4] = A, [-3] = "Aé", [-2] = "Aé中", [-1] = "Aé中🙂",
-    [0] = EMPTY, [1] = EMPTY, [2] = A, [3] = "Aé", [4] = "Aé中",
-    [5] = "Aé中🙂", [6] = S, [7] = S,
+    [-7] = EMPTY,
+    [-6] = EMPTY,
+    [-5] = EMPTY,
+    [-4] = A,
+    [-3] = "Aé",
+    [-2] = "Aé中",
+    [-1] = "Aé中🙂",
+    [0] = EMPTY,
+    [1] = EMPTY,
+    [2] = A,
+    [3] = "Aé",
+    [4] = "Aé中",
+    [5] = "Aé中🙂",
+    [6] = S,
+    [7] = S,
   }
   for i = -7, 7 do
     eq(utf8.remove(S, i), remove_from[i], "utf8.remove single index " .. i)
@@ -1642,76 +1434,27 @@ end
 
 -- utf8.widthindex
 do
-  local i, off, w
-
-  i, off, w = utf8.widthindex("abc", 1)
-  eq(i, 1)
-  eq(off, 1)
-  eq(w, 1)
-
-  i, off, w = utf8.widthindex("abc", 2)
-  eq(i, 2)
-  eq(off, 1)
-  eq(w, 1)
-
-  i, off, w = utf8.widthindex("abc", 3)
-  eq(i, 3)
-  eq(off, 1)
-  eq(w, 1)
-
-  i, off, w = utf8.widthindex("abc", 4)
-  eq(i, 3)
-  eq(off, nil)
-  eq(w, nil)
+  assert_array({ utf8.widthindex("abc", 1) }, { 1, 1, 1 })
+  assert_array({ utf8.widthindex("abc", 2) }, { 2, 1, 1 })
+  assert_array({ utf8.widthindex("abc", 3) }, { 3, 1, 1 })
+  assert_array({ utf8.widthindex("abc", 4) }, { 3, nil, nil })
 
   -- double-width characters
-  i, off, w = utf8.widthindex("你a", 1)
-  eq(i, 1)
-  eq(off, 1)
-  eq(w, 2)
-
-  i, off, w = utf8.widthindex("你a", 2)
-  eq(i, 1)
-  eq(off, 2)
-  eq(w, 2)
-
-  i, off, w = utf8.widthindex("你a", 3)
-  eq(i, 2)
-  eq(off, 1)
-  eq(w, 1)
-
-  i, off, w = utf8.widthindex("你a", 4)
-  eq(i, 2)
-  eq(off, nil)
-  eq(w, nil)
+  assert_array({ utf8.widthindex("你a", 1) }, { 1, 1, 2 })
+  assert_array({ utf8.widthindex("你a", 2) }, { 1, 2, 2 })
+  assert_array({ utf8.widthindex("你a", 3) }, { 2, 1, 1 })
+  assert_array({ utf8.widthindex("你a", 4) }, { 2, nil, nil })
 
   -- zero/negative widths
-  i, off, w = utf8.widthindex("abc", 0)
-  eq(i, 1)
-  eq(off, 0)
-  eq(w, 1)
-
-  i, off, w = utf8.widthindex("abc", -1)
-  eq(i, 1)
-  eq(off, -1)
-  eq(w, 1)
+  assert_array({ utf8.widthindex("abc", 0) }, { 1, 0, 1 })
+  assert_array({ utf8.widthindex("abc", -1) }, { 1, -1, 1 })
 
   -- byte ranges
-  i, off, w = utf8.widthindex(S, 1, 4, 6)
-  eq(i, 1)
-  eq(off, 1)
-  eq(w, 2)
-
-  i, off, w = utf8.widthindex(S, 2, 7, 10)
-  eq(i, 1)
-  eq(off, 2)
-  eq(w, 2)
+  assert_array({ utf8.widthindex(S, 1, 4, 6) }, { 1, 1, 2 })
+  assert_array({ utf8.widthindex(S, 2, 7, 10) }, { 1, 2, 2 })
 
   -- ambiguous width
-  i, off, w = utf8.widthindex("·a", 2, 1, 3, 2)
-  eq(i, 1)
-  eq(off, 2)
-  eq(w, 2)
+  assert_array({ utf8.widthindex("·a", 2, 1, 3, 2) }, { 1, 2, 2 })
 
   raises(function() utf8.widthindex(S, 1, 3, 3) end)
 
@@ -1739,26 +1482,14 @@ do
   end
 
   -- a byte position one past the end yields an empty result
-  i, off, w = utf8.widthindex(S, 1, 12)
-  eq(i, 0)
-  eq(off, nil)
-  eq(w, nil)
+  assert_array({ utf8.widthindex(S, 1, 12) }, { 0, nil, nil })
 
   -- negative byte start and interior ranges
-  i, off, w = utf8.widthindex(S, 1, -11, -1)
-  eq(i, 1)
-  eq(off, 1)
-  eq(w, 1)
+  assert_array({ utf8.widthindex(S, 1, -11, -1) }, { 1, 1, 1 })
 
-  i, off, w = utf8.widthindex(S, 3, 4, 10)
-  eq(i, 2)
-  eq(off, 1)
-  eq(w, 2)
+  assert_array({ utf8.widthindex(S, 3, 4, 10) }, { 2, 1, 2 })
 
-  i, off, w = utf8.widthindex(S, 0, 4, 10)
-  eq(i, 1)
-  eq(off, 0)
-  eq(w, 2)
+  assert_array({ utf8.widthindex(S, 0, 4, 10) }, { 1, 0, 2 })
 
   -- out-of-range byte positions are rejected
   raises(function() utf8.widthindex(S, 1, 0) end)
@@ -1771,78 +1502,31 @@ end
 
 -- utf8.widthlimit
 do
-  local p, remain = utf8.widthlimit("hello", 0)
-  eq(p, 0)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit("hello", 1)
-  eq(p, 1)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit("hello", 5)
-  eq(p, 5)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit("hello", 6)
-  eq(p, 5)
-  eq(remain, 1)
-
-  p, remain = utf8.widthlimit("hello", 100)
-  eq(p, 5)
-  eq(remain, 95)
+  assert_array({ utf8.widthlimit("hello", 0) }, { 0, 0 })
+  assert_array({ utf8.widthlimit("hello", 1) }, { 1, 0 })
+  assert_array({ utf8.widthlimit("hello", 5) }, { 5, 0 })
+  assert_array({ utf8.widthlimit("hello", 6) }, { 5, 1 })
+  assert_array({ utf8.widthlimit("hello", 100) }, { 5, 95 })
 
   -- a single double-width character
-  p, remain = utf8.widthlimit("你", 1)
-  eq(p, 0)
-  eq(remain, 1)
-
-  p, remain = utf8.widthlimit("你", 2)
-  eq(p, 3)
-  eq(remain, 0)
+  assert_array({ utf8.widthlimit("你", 1) }, { 0, 1 })
+  assert_array({ utf8.widthlimit("你", 2) }, { 3, 0 })
 
   -- negative limits work from the back
-  p, remain = utf8.widthlimit("hello", -1)
-  eq(p, 5)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit("hello", -5)
-  eq(p, 1)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit("hello", -6)
-  eq(p, 1)
-  eq(remain, -1)
-
-  p, remain = utf8.widthlimit("你a", 2)
-  eq(p, 3)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit("你a", 3)
-  eq(p, 4)
-  eq(remain, 0)
+  assert_array({ utf8.widthlimit("hello", -1) }, { 5, 0 })
+  assert_array({ utf8.widthlimit("hello", -5) }, { 1, 0 })
+  assert_array({ utf8.widthlimit("hello", -6) }, { 1, -1 })
+  assert_array({ utf8.widthlimit("你a", 2) }, { 3, 0 })
+  assert_array({ utf8.widthlimit("你a", 3) }, { 4, 0 })
 
   -- byte ranges
-  p, remain = utf8.widthlimit(S, 2, 4, 10)
-  eq(p, 6)
-  eq(remain, 0)
-
-  p, remain = utf8.widthlimit(S, 3, 4, 10)
-  eq(p, 6)
-  eq(remain, 1)
-
-  p, remain = utf8.widthlimit(S, -2, 1, 10)
-  eq(p, 7)
-  eq(remain, 0)
+  assert_array({ utf8.widthlimit(S, 2, 4, 10) }, { 6, 0 })
+  assert_array({ utf8.widthlimit(S, 3, 4, 10) }, { 6, 1 })
+  assert_array({ utf8.widthlimit(S, -2, 1, 10) }, { 7, 0 })
 
   -- empty range
-  p, remain = utf8.widthlimit(S, 10, 5, 2)
-  eq(p, 4)
-  eq(remain, 10)
-
-  p, remain = utf8.widthlimit(S, -10, 5, 2)
-  eq(p, 3)
-  eq(remain, -10)
-
+  assert_array({ utf8.widthlimit(S, 10, 5, 2) }, { 4, 10 })
+  assert_array({ utf8.widthlimit(S, -10, 5, 2) }, { 3, -10 })
   raises(function() utf8.widthlimit(S, 1, 3, 3) end)
 
   -- every limit for the whole fixture
@@ -1874,23 +1558,13 @@ do
     [12] = { 11, 5 },
   }
   for limit = -12, 12 do
-    p, remain = utf8.widthlimit(S, limit)
-    eq(p, wl_expected[limit][1], "widthlimit position " .. limit)
-    eq(remain, wl_expected[limit][2], "widthlimit remain " .. limit)
+    assert_array({ utf8.widthlimit(S, limit) }, wl_expected[limit])
   end
 
   -- interior ranges
-  p, remain = utf8.widthlimit(S, 1, 5, 4)
-  eq(p, 4)
-  eq(remain, 1)
-
-  p, remain = utf8.widthlimit(S, 1, 4, 2)
-  eq(p, 3)
-  eq(remain, 1)
-
-  p, remain = utf8.widthlimit(S, -2, 4, 10)
-  eq(p, 7)
-  eq(remain, 0)
+  assert_array({ utf8.widthlimit(S, 1, 5, 4) }, { 4, 1 })
+  assert_array({ utf8.widthlimit(S, 1, 4, 2) }, { 3, 1 })
+  assert_array({ utf8.widthlimit(S, -2, 4, 10) }, { 7, 0 })
 
   -- out-of-range byte positions are rejected
   raises(function() utf8.widthlimit(S, 1, 0) end)
@@ -2192,15 +1866,15 @@ do
 
   -- a clampable initial byte position starts the scan there
   assert_array(graphemes(S, -5), {
-    { 7, 10 },
+    { 7,  10 },
     { 11, 11 },
   })
 
   assert_array(graphemes(S, -11), {
-    { 1, 1 },
-    { 2, 3 },
-    { 4, 6 },
-    { 7, 10 },
+    { 1,  1 },
+    { 2,  3 },
+    { 4,  6 },
+    { 7,  10 },
     { 11, 11 },
   })
 
@@ -2210,7 +1884,7 @@ do
 
   -- negative byte ranges
   assert_array(graphemes(S, -5, -1), {
-    { 7, 10 },
+    { 7,  10 },
     { 11, 11 },
   })
 
