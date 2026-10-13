@@ -202,11 +202,10 @@ fn l_offset(
         }
     }
 
-    let Some(range) = char_range(&bytes, pos) else {
-        return (len + 1, len + 1).into_lua_multi(lua);
-    };
-
-    (range.start + 1, range.end).into_lua_multi(lua)
+    match char_range(&bytes, pos) {
+        Some(Range { start, end }) => (start + 1, end).into_lua_multi(lua),
+        None => (len + 1, len + 1).into_lua_multi(lua),
+    }
 }
 
 fn l_codepoint(
@@ -694,58 +693,47 @@ fn l_charpos(
     lua: &Lua,
     (s, i_or_n, n): (LuaString, Option<LuaInteger>, Option<LuaInteger>),
 ) -> LuaResult<MultiValue> {
-    let s = s
-        .to_str()
-        .map_err(|_| mlua::Error::runtime("invalid UTF-8 code"))?;
+    let bytes = s.as_bytes();
+    let len = bytes.len();
 
-    let (search, base, from_end, index) = match n {
-        None => {
-            let n = i_or_n.unwrap_or(0);
-            match n {
-                0 => (&s[..], 0, false, 0),
-                n if n > 0 => (&s[..], 0, false, (n - 1) as usize),
-                n => (&s[..], 0, true, (-n - 1) as usize),
-            }
+    let position = match (i_or_n, n) {
+        (None, None) | (Some(0), None) | (None, Some(0)) | (Some(0), Some(0)) => 0,
+        (None, Some(n)) => {
+            debug_assert!(n != 0);
+            let Some(pos) = move_by(&bytes, 0, n as isize) else {
+                return mlua::Nil.into_lua_multi(lua);
+            };
+            pos
         }
-        Some(n) => {
-            let i = i_or_n.unwrap_or(1);
-            let pos = normalize_lua_index(i, s.len()).max(1);
-            let pos = pos - 1;
-
-            match n {
-                0 => {
-                    let start = s.floor_char_boundary(pos);
-                    (&s[start..], start, false, 0)
-                }
-                n if n > 0 => {
-                    let start = s.ceil_char_boundary(pos);
-                    let index = if start == pos {
-                        n as usize
-                    } else {
-                        (n - 1) as usize
-                    };
-
-                    (&s[start..], start, false, index)
-                }
-                n => {
-                    let end = s.ceil_char_boundary(pos);
-                    (&s[..end], 0, true, (-n - 1) as usize)
-                }
-            }
+        (Some(n), None) => {
+            debug_assert!(n != 0);
+            let i = if n > 0 { 0 } else { len };
+            let n = if n > 0 { n - 1 } else { n } as isize;
+            let Some(pos) = move_by(&bytes, i, n as isize) else {
+                return mlua::Nil.into_lua_multi(lua);
+            };
+            pos
+        }
+        (Some(i), Some(n)) => {
+            debug_assert!(i != 0 && n != 0);
+            let i = normalize_lua_index(i, len).max(1) - 1;
+            let Some(pos) = move_by(&bytes, i, n as isize) else {
+                return mlua::Nil.into_lua_multi(lua);
+            };
+            pos
         }
     };
 
-    let char_index = if from_end {
-        search.char_indices().nth_back(index)
-    } else {
-        search.char_indices().nth(index)
-    };
-
-    if let Some((offset, ch)) = char_index {
-        (base + offset + 1, ch as LuaInteger).into_lua_multi(lua)
-    } else {
-        mlua::Nil.into_lua_multi(lua)
+    if position == len {
+        return mlua::Nil.into_lua_multi(lua);
     }
+
+    let cp = match decode(&bytes[position..], false) {
+        Ok((cp, _)) => cp,
+        Err(_) => 0,
+    };
+
+    (position + 1, cp).into_lua_multi(lua)
 }
 
 fn l_next(

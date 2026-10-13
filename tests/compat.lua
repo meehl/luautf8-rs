@@ -1087,8 +1087,10 @@ do
   assert_array({ utf8.charpos(S, 0, 0) }, { 1, 0x41 })
 
   -- i == nil
+  assert_array({ utf8.charpos(S, nil, 1) }, { 2, 0xE9 })
   assert_array({ utf8.charpos(S, nil, 2) }, { 4, 0x4E2D })
   assert_array({ utf8.charpos(S, nil, 0) }, { 1, 0x41 })
+  assert_array({ utf8.charpos(S, nil, -1) }, { nil, nil })
 
   -- i inside a character
   assert_array({ utf8.charpos(S, 3, 1) }, { 4, 0x4E2D })
