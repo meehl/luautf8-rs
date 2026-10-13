@@ -195,13 +195,13 @@ do
   eq(utf8.offset(S, 11, -1), nil)
 
   -- accepts invalid encodings
-  assert_array({ utf8.offset("안\xFF녕", 3) }, { 5, 7 }) -- invalid leading byte
-  assert_array({ utf8.offset("안\xC0\xAF녕", 3) }, { 6, 8 }) -- overlong
-  assert_array({ utf8.offset("\x80\x80\x80", 0, 2) }, { 1, 3 }) -- starts with continuation bytes
+  assert_array({ utf8.offset("안\255녕", 3) }, { 5, 7 }) -- invalid leading byte
+  assert_array({ utf8.offset("안\192\175녕", 3) }, { 6, 8 }) -- overlong
+  assert_array({ utf8.offset("\128\128\128", 0, 2) }, { 1, 3 }) -- starts with continuation bytes
 
   -- accepts surrogates and code points above 0x10FFFF
-  assert_array({ utf8.offset("안\xED\xA0\x80녕", 3) }, { 7, 9 })
-  assert_array({ utf8.offset("안\xF8\x88\x80\x80\x80녕", 3) }, { 9, 11 })
+  assert_array({ utf8.offset("안\237\160\128녕", 3) }, { 7, 9 })
+  assert_array({ utf8.offset("안\248\136\128\128\128녕", 3) }, { 9, 11 })
 end
 
 ---
@@ -242,18 +242,18 @@ do
   raises(function() utf8.codepoint(S, 0, 3) end)
 
   -- surrogates and code points above 0x10FFFF are rejected
-  raises(function() utf8.codepoint("\xED\xA0\x80", 1, 1) end)
-  raises(function() utf8.codepoint("\xF8\x88\x80\x80\x80", 1, 1) end)
+  raises(function() utf8.codepoint("\237\160\128", 1, 1) end)
+  raises(function() utf8.codepoint("\248\136\128\128\128", 1, 1) end)
 
   -- lax mode accepts them
-  eq(utf8.codepoint("\xED\xA0\x80", 1, 1, true), 0xD800)
-  eq(utf8.codepoint("\xF8\x88\x80\x80\x80", 1, 1, true), 0x200000)
+  eq(utf8.codepoint("\237\160\128", 1, 1, true), 0xD800)
+  eq(utf8.codepoint("\248\136\128\128\128", 1, 1, true), 0x200000)
 
   -- lax mode rejects invalid encodings
-  raises(function() utf8.codepoint("\xFF", 1, 1, true) end)
-  raises(function() utf8.codepoint("\xC0\x80", 1, 1, true) end)
-  raises(function() utf8.codepoint("\xF0\x80\x80\x80", 1, 1, true) end)
-  raises(function() utf8.codepoint("\x80\x80\x80\x80", 1, 1, true) end)
+  raises(function() utf8.codepoint("\255", 1, 1, true) end)
+  raises(function() utf8.codepoint("\192\128", 1, 1, true) end)
+  raises(function() utf8.codepoint("\240\128\128\128", 1, 1, true) end)
+  raises(function() utf8.codepoint("\128\128\128\128", 1, 1, true) end)
 
   -- out-of-range byte positions are rejected
   raises(function() utf8.codepoint(S, -100) end)
@@ -282,18 +282,18 @@ do
   })
 
   -- surrogates and code points above 0x10FFFF are rejected
-  raises(function() collect_codes("\xED\xA0\x80") end)
-  raises(function() collect_codes("\xF8\x88\x80\x80\x80") end)
+  raises(function() collect_codes("\237\160\128") end)
+  raises(function() collect_codes("\248\136\128\128\128") end)
 
   -- lax mode accepts them
-  assert_array(collect_codes("\xED\xA0\x80", true), { { 1, 0xD800 } })
-  assert_array(collect_codes("\xF8\x88\x80\x80\x80", true), { { 1, 0x200000 } })
+  assert_array(collect_codes("\237\160\128", true), { { 1, 0xD800 } })
+  assert_array(collect_codes("\248\136\128\128\128", true), { { 1, 0x200000 } })
 
   -- lax mode rejects invalid encodings
-  raises(function() collect_codes("\xFF", true) end)
-  raises(function() collect_codes("\xC0\x80", true) end)
-  raises(function() collect_codes("\xF0\x80\x80\x80", true) end)
-  raises(function() collect_codes("\x80\x80\x80\x80", true) end)
+  raises(function() collect_codes("\255", true) end)
+  raises(function() collect_codes("\192\128", true) end)
+  raises(function() collect_codes("\240\128\128\128", true) end)
+  raises(function() collect_codes("\128\128\128\128", true) end)
 end
 
 ---
@@ -352,11 +352,11 @@ do
   eq(string.char(utf8.byte(nul, 1, -1)), nul)
 
   -- raises error on invalid utf8
-  raises(function() utf8.byte("\xFF") end)     -- invalid leading byte
-  raises(function() utf8.byte("\xC0\xAF") end) -- overlong
+  raises(function() utf8.byte("\255") end)     -- invalid leading byte
+  raises(function() utf8.byte("\192\175") end) -- overlong
   -- but accepts surrogates and code points above 0x10FFFF
-  eq(utf8.byte("\xED\xA0\x80"), 55296)
-  eq(utf8.byte("\xF8\x88\x80\x80\x80"), 2097152)
+  eq(utf8.byte("\237\160\128"), 55296)
+  eq(utf8.byte("\248\136\128\128\128"), 2097152)
 end
 
 ---
@@ -376,21 +376,21 @@ do
   eq(utf8.char(0x41, 0xE9, 0x4E2D, 0x1F642, 0x42), S)
 
   -- doesn't error on surrogate code points
-  eq(utf8.char(0xD800), "\xED\xA0\x80")
-  eq(utf8.char(0xDFFF), "\xED\xBF\xBF")
+  eq(utf8.char(0xD800), "\237\160\128")
+  eq(utf8.char(0xDFFF), "\237\191\191")
 
   -- errors on code points outside range
   raises(function() utf8.char(-1) end)
   raises(function() utf8.char(0x110000) end)
 
   -- encoding boundaries for the 1- to 4-byte forms
-  eq(utf8.char(0x7F), "\x7F")
-  eq(utf8.char(0x80), "\xC2\x80")
-  eq(utf8.char(0x7FF), "\xDF\xBF")
-  eq(utf8.char(0x800), "\xE0\xA0\x80")
-  eq(utf8.char(0xFFFF), "\xEF\xBF\xBF")
-  eq(utf8.char(0x10000), "\xF0\x90\x80\x80")
-  eq(utf8.char(0x10FFFF), "\xF4\x8F\xBF\xBF")
+  eq(utf8.char(0x7F), "\127")
+  eq(utf8.char(0x80), "\194\128")
+  eq(utf8.char(0x7FF), "\223\191")
+  eq(utf8.char(0x800), "\224\160\128")
+  eq(utf8.char(0xFFFF), "\239\191\191")
+  eq(utf8.char(0x10000), "\240\144\128\128")
+  eq(utf8.char(0x10FFFF), "\244\143\191\191")
 end
 
 ---
@@ -435,12 +435,12 @@ do
   eq(utf8.len(S, -11, -5), 4)
 
   -- invalid UTF-8/code points
-  local bad1 = "\x80"
-  local bad2 = "\xC0\x80"
-  local bad3 = "\xE2\x28\xA1"
-  local bad4 = "\xF0\x28\x8C\xBC"
-  local bad5 = "\xED\xA0\x80"
-  local bad6 = "\xF8\x88\x80\x80\x80"
+  local bad1 = "\128"
+  local bad2 = "\192\128"
+  local bad3 = "\226\040\161"
+  local bad4 = "\240\040\140\188"
+  local bad5 = "\237\160\128"
+  local bad6 = "\248\136\128\128\128"
 
   assert_array({ utf8.len(bad1) }, { nil, 1 })
   assert_array({ utf8.len(bad2) }, { nil, 1 })
@@ -579,12 +579,12 @@ do
   eq(utf8.sub(EMPTY, 100, -100), EMPTY)
 
   -- accepts invalid utf8
-  eq(utf8.sub("a\xFFb", 2), "\xFFb")                -- invalid leading byte
-  eq(utf8.sub("a\xC0\xAFb", 2), "\xC0\xAFb")        -- overlong
-  eq(utf8.sub("\x80\x80\x80b", 1), "\x80\x80\x80b") -- starts with continuation bytes
+  eq(utf8.sub("a\255b", 2), "\255b")                -- invalid leading byte
+  eq(utf8.sub("a\192\175b", 2), "\192\175b")        -- overlong
+  eq(utf8.sub("\128\128\128b", 1), "\128\128\128b") -- starts with continuation bytes
   -- accepts valid utf8 with surrogates and code points above 0x10FFFF
-  eq(utf8.sub("a\xED\xA0\x80b", 2), "\xED\xA0\x80b")
-  eq(utf8.sub("a\xF8\x88\x80\x80\x80b", 2), "\xF8\x88\x80\x80\x80b")
+  eq(utf8.sub("a\237\160\128b", 2), "\237\160\128b")
+  eq(utf8.sub("a\248\136\128\128\128b", 2), "\248\136\128\128\128b")
 end
 
 ---
@@ -884,7 +884,7 @@ do
   eq(utf8.reverse(S), "B🙂中éA")
   eq(utf8.reverse("🙂é中"), "中é🙂")
 
-  local bad = "A\xFFB"
+  local bad = "A\255B"
   raises(function() utf8.reverse(bad) end)
 
   -- NUL and control bytes are preserved by reverse
@@ -1044,11 +1044,11 @@ do
   raises(function() utf8.escape("%x{xyz}") end)
 
   -- raises error on invalid utf8
-  raises(function() utf8.escape("\xFF") end)     -- invalid leading byte
-  raises(function() utf8.escape("\xC0\xAF") end) -- overlong
+  raises(function() utf8.escape("\255") end)     -- invalid leading byte
+  raises(function() utf8.escape("\192\175") end) -- overlong
   -- but accepts surrogates and code points above 0x10FFFF
-  eq(utf8.escape("%x{41}\xED\xA0\x80"), "A\xED\xA0\x80")
-  eq(utf8.escape("\xF8\x88\x80\x80\x80"), "\xF8\x88\x80\x80\x80")
+  eq(utf8.escape("%x{41}\237\160\128"), "A\237\160\128")
+  eq(utf8.escape("\248\136\128\128\128"), "\248\136\128\128\128")
 end
 
 ---
@@ -1120,12 +1120,12 @@ do
   assert_array({ utf8.charpos(S, -11, 1) }, { 2, 0xE9 })
 
   -- accepts surrogates and code points above 0x10FFFF
-  assert_array({ utf8.charpos("\xED\xA0\x80", 1) }, { 1, 0xD800 })
-  assert_array({ utf8.charpos("\xF8\x88\x80\x80\x80", 1) }, { 1, 0x200000 })
+  assert_array({ utf8.charpos("\237\160\128", 1) }, { 1, 0xD800 })
+  assert_array({ utf8.charpos("\248\136\128\128\128", 1) }, { 1, 0x200000 })
 
   -- returns zero for invalid encodings
-  assert_array({ utf8.charpos("\xFF", 1) }, { 1, 0 }) -- invalid leading byte
-  assert_array({ utf8.charpos("\xC0\xAF", 1) }, { 1, 0 }) -- overlong
+  assert_array({ utf8.charpos("\255", 1) }, { 1, 0 }) -- invalid leading byte
+  assert_array({ utf8.charpos("\192\175", 1) }, { 1, 0 }) -- overlong
 end
 
 ---
@@ -1593,21 +1593,21 @@ do
   check(utf8.isvalid("é中🙂"))
 
   -- valid boundaries
-  check(utf8.isvalid("\x7F"))
-  check(utf8.isvalid("\xC2\x80"))
-  check(utf8.isvalid("\xDF\xBF"))
-  check(utf8.isvalid("\xE0\xA0\x80"))
-  check(utf8.isvalid("\xEF\xBF\xBF"))
-  check(utf8.isvalid("\xF0\x90\x80\x80"))
-  check(utf8.isvalid("\xF4\x8F\xBF\xBF"))
+  check(utf8.isvalid("\127"))
+  check(utf8.isvalid("\194\128"))
+  check(utf8.isvalid("\223\191"))
+  check(utf8.isvalid("\224\160\128"))
+  check(utf8.isvalid("\239\191\191"))
+  check(utf8.isvalid("\240\144\128\128"))
+  check(utf8.isvalid("\244\143\191\191"))
 
   -- invalid boundaries
-  check(not utf8.isvalid("\x80"))
-  check(not utf8.isvalid("\xC0\x80"))
-  check(not utf8.isvalid("\xE2\x28\xA1"))
-  check(not utf8.isvalid("\xF0\x28\x8C\xBC"))
-  check(not utf8.isvalid("\xED\xA0\x80"))
-  check(not utf8.isvalid("\xF4\x90\x80\x80"))
+  check(not utf8.isvalid("\128"))
+  check(not utf8.isvalid("\192\128"))
+  check(not utf8.isvalid("\226\040\161"))
+  check(not utf8.isvalid("\240\040\140\188"))
+  check(not utf8.isvalid("\237\160\128"))
+  check(not utf8.isvalid("\244\144\128\128"))
 end
 
 ---
@@ -1617,28 +1617,28 @@ do
   assert_array({ utf8.clean(S) }, { S, true })
   assert_array({ utf8.clean("") }, { "", true })
 
-  assert_array({ utf8.clean("A\xFFB") }, { "A�B", false })
-  assert_array({ utf8.clean("A\xFF\xFEB") }, { "A�B", false })
-  assert_array({ utf8.clean("A\xFF\xFFB") }, { "A�B", false })
+  assert_array({ utf8.clean("A\255B") }, { "A�B", false })
+  assert_array({ utf8.clean("A\255\254B") }, { "A�B", false })
+  assert_array({ utf8.clean("A\255\255B") }, { "A�B", false })
 
-  assert_array({ utf8.clean("A\xFFB", "?") }, { "A?B", false })
-  assert_array({ utf8.clean("\xFFB", "?") }, { "?B", false })
-  assert_array({ utf8.clean("B\xFF", "?") }, { "B?", false })
-  assert_array({ utf8.clean("\xFFé\x80", "?") }, { "?é?", false })
+  assert_array({ utf8.clean("A\255B", "?") }, { "A?B", false })
+  assert_array({ utf8.clean("\255B", "?") }, { "?B", false })
+  assert_array({ utf8.clean("B\255", "?") }, { "B?", false })
+  assert_array({ utf8.clean("\255é\128", "?") }, { "?é?", false })
 
   -- consecutive invalid bytes are replaced with only one replacement character
-  assert_array({ utf8.clean("\xFF\x80\xFF") }, { "�", false })
-  assert_array({ utf8.clean("\xFF\x80\xFF", "?") }, { "?", false })
+  assert_array({ utf8.clean("\255\128\255") }, { "�", false })
+  assert_array({ utf8.clean("\255\128\255", "?") }, { "?", false })
 
   -- a replacement containing UTF-8 itself
-  assert_array({ utf8.clean("A\xFFB", "🙂") }, { "A🙂B", false })
+  assert_array({ utf8.clean("A\255B", "🙂") }, { "A🙂B", false })
 
   -- replaces surrogates and code points above 0x10FFFF
-  assert_array({ utf8.clean("A\xED\xA0\x80B", "?") }, { "A?B", false })
-  assert_array({ utf8.clean("A\xF8\x88\x80\x80\x80B", "?") }, { "A?B", false })
+  assert_array({ utf8.clean("A\237\160\128B", "?") }, { "A?B", false })
+  assert_array({ utf8.clean("A\248\136\128\128\128B", "?") }, { "A?B", false })
 
   -- leading continuation bytes
-  assert_array({ utf8.clean("A\x80\x80\x80B", "?") }, { "A?B", false })
+  assert_array({ utf8.clean("A\128\128\128B", "?") }, { "A?B", false })
 end
 
 ---
@@ -1648,30 +1648,30 @@ do
   eq(utf8.invalidoffset(""), nil)
   eq(utf8.invalidoffset(S), nil)
 
-  eq(utf8.invalidoffset("A\xFFB"), 2)
-  eq(utf8.invalidoffset("A\xFF\xFEB"), 2)
-  eq(utf8.invalidoffset("Aé\xFFB"), 4)
+  eq(utf8.invalidoffset("A\255B"), 2)
+  eq(utf8.invalidoffset("A\255\254B"), 2)
+  eq(utf8.invalidoffset("Aé\255B"), 4)
 
   -- start positions
-  eq(utf8.invalidoffset("A\xFFB", 1), 2)
-  eq(utf8.invalidoffset("A\xFFB", 2), 2)
-  eq(utf8.invalidoffset("A\xFFB", 3), nil)
+  eq(utf8.invalidoffset("A\255B", 1), 2)
+  eq(utf8.invalidoffset("A\255B", 2), 2)
+  eq(utf8.invalidoffset("A\255B", 3), nil)
 
   -- negative positions
-  eq(utf8.invalidoffset("A\xFFB", -1), nil)
-  eq(utf8.invalidoffset("A\xFFB", -2), 2)
-  eq(utf8.invalidoffset("A\xFFB", -3), 2)
+  eq(utf8.invalidoffset("A\255B", -1), nil)
+  eq(utf8.invalidoffset("A\255B", -2), 2)
+  eq(utf8.invalidoffset("A\255B", -3), 2)
 
-  eq(utf8.invalidoffset("Aé\xFFB", -1), nil)
-  eq(utf8.invalidoffset("Aé\xFFB", -2), 4)
-  eq(utf8.invalidoffset("Aé\xFFB", -4), 4)
+  eq(utf8.invalidoffset("Aé\255B", -1), nil)
+  eq(utf8.invalidoffset("Aé\255B", -2), 4)
+  eq(utf8.invalidoffset("Aé\255B", -4), 4)
 
   -- zero and out of range.
-  eq(utf8.invalidoffset("A\xFFB", 0), 2)
-  eq(utf8.invalidoffset("A\xFFB", 10), nil)
+  eq(utf8.invalidoffset("A\255B", 0), 2)
+  eq(utf8.invalidoffset("A\255B", 10), nil)
 
   -- invalid-byte offsets: every possible start position
-  local bad = "Aé\xFF🙂B"
+  local bad = "Aé\255🙂B"
 
   -- bytes:
   -- 1 A
@@ -1730,14 +1730,14 @@ do
   check(utf8.isnfc("Å"))
 
   check(not utf8.isnfc("café"))
-  check(not utf8.isnfc("A\u{030A}"))
-  check(not utf8.isnfc("e\u{0301}"))
+  check(not utf8.isnfc("A\204\138"))
+  check(not utf8.isnfc("e\204\129"))
 
   -- already composed forms
-  check(utf8.isnfc("\u{00E9}"))
-  check(utf8.isnfc("\u{00C5}"))
+  check(utf8.isnfc("\195\169"))
+  check(utf8.isnfc("\195\133"))
 
-  raises(function() utf8.isnfc("\xFF") end)
+  raises(function() utf8.isnfc("\255") end)
 end
 
 ---
@@ -1752,31 +1752,31 @@ do
   eq(r, "café")
   check(was)
 
-  r, was = utf8.normalize_nfc("cafe\u{0301}")
+  r, was = utf8.normalize_nfc("cafe\204\129")
   eq(r, "café")
   check(not was)
 
-  r, was = utf8.normalize_nfc("A\u{030A}")
+  r, was = utf8.normalize_nfc("A\204\138")
   eq(r, "Å")
   check(not was)
 
-  r, was = utf8.normalize_nfc("e\u{0301}")
+  r, was = utf8.normalize_nfc("e\204\129")
   eq(r, "é")
   check(not was)
 
   -- combining sequences
-  r, was = utf8.normalize_nfc("a\u{0308}\u{0301}")
-  eq(r, "ä\u{0301}")
+  r, was = utf8.normalize_nfc("a\204\136\204\129")
+  eq(r, "ä\204\129")
   check(not was)
 
   -- function is idempotent
-  local composed = utf8.normalize_nfc("Cafe\u{0301}")
+  local composed = utf8.normalize_nfc("Cafe\204\129")
   local normalized = composed
   local normalized2, already = utf8.normalize_nfc(normalized)
   eq(normalized2, normalized)
   check(already)
 
-  raises(function() utf8.normalize_nfc("\xFF") end)
+  raises(function() utf8.normalize_nfc("\255") end)
 end
 
 ---
@@ -1805,7 +1805,7 @@ do
   })
 
   -- combining mark stays with its base
-  assert_array(graphemes("a\u{0301}b"), {
+  assert_array(graphemes("a\204\129b"), {
     { 1, 3 },
     { 4, 4 },
   })
@@ -1830,11 +1830,11 @@ do
   eq(#gr, 1)
 
   -- byte ranges
-  assert_array(graphemes("a\u{0301}b", 1, 3), {
+  assert_array(graphemes("a\204\129b", 1, 3), {
     { 1, 3 },
   })
 
-  assert_array(graphemes("a\u{0301}b", 4, 4), {
+  assert_array(graphemes("a\204\129b", 4, 4), {
     { 4, 4 },
   })
 
