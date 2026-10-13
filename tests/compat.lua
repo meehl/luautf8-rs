@@ -1261,25 +1261,35 @@ do
 
   eq(utf8.insert(S, -1, "X"), "Aé中🙂XB")
   eq(utf8.insert(S, -2, "X"), "Aé中X🙂B")
+  eq(utf8.insert(S, -3, "X"), "AéX中🙂B")
+  eq(utf8.insert(S, -4, "X"), "AXé中🙂B")
   eq(utf8.insert(S, -5, "X"), "XAé中🙂B")
 
-  -- missing third argument
-  raises(function() utf8.insert(S, 1) end)
-
-  -- out-of-range.
-  raises(function() utf8.insert(S, 100, "X") end)
-  raises(function() utf8.insert(S, -100, "X") end)
-
+  -- emtpy string
   eq(utf8.insert("", "X"), "X")
-  eq(utf8.insert("", 1, "X"), "X")
   eq(utf8.insert("", 0, "X"), "X")
+  eq(utf8.insert("", 1, "X"), "X")
 
+  -- insert mutli-byte string
   eq(utf8.insert(S, 3, "🙂é"), "Aé🙂é中🙂B")
+
+  -- insert empty string
+  eq(utf8.insert(S, ""), S)
 
   -- a numeric insertion value is converted to its string form
   eq(utf8.insert("abc", 1, 5), "5abc")
   eq(utf8.insert("abc", 1, 42), "42abc")
   eq(utf8.insert("abc", 1, 3.14), "3.14abc")
+
+  -- missing arguments
+  raises(function() utf8.insert(S) end)
+  raises(function() utf8.insert(S, 1) end)
+
+  -- out-of-range
+  raises(function() utf8.insert(S, 7, "X") end)
+  raises(function() utf8.insert(S, 100, "X") end)
+  raises(function() utf8.insert(S, -6, "X") end)
+  raises(function() utf8.insert(S, -100, "X") end)
 
   -- one before the first character (and one past the end) is invalid
   raises(function() utf8.insert(S, -6, "X") end)
@@ -1488,9 +1498,7 @@ do
 
   -- negative byte start and interior ranges
   assert_array({ utf8.widthindex(S, 1, -11, -1) }, { 1, 1, 1 })
-
   assert_array({ utf8.widthindex(S, 3, 4, 10) }, { 2, 1, 2 })
-
   assert_array({ utf8.widthindex(S, 0, 4, 10) }, { 1, 0, 2 })
 
   -- out-of-range byte positions are rejected
@@ -1606,62 +1614,31 @@ end
 
 -- utf8.clean
 do
-  local r, valid = utf8.clean("")
-  eq(r, "")
-  check(valid)
+  assert_array({ utf8.clean(S) }, { S, true })
+  assert_array({ utf8.clean("") }, { "", true })
 
-  -- cleaning valid input is identity
-  r, valid = utf8.clean(S)
-  eq(r, S)
-  check(valid)
+  assert_array({ utf8.clean("A\xFFB") }, { "A�B", false })
+  assert_array({ utf8.clean("A\xFF\xFEB") }, { "A�B", false })
+  assert_array({ utf8.clean("A\xFF\xFFB") }, { "A�B", false })
 
-  r, valid = utf8.clean("A\xFFB")
-  eq(r, "A�B")
-  check(not valid)
-
-  r, valid = utf8.clean("A\xFF\xFEB")
-  eq(r, "A�B")
-  check(not valid)
-
-  r, valid = utf8.clean("\xFF\xFF")
-  eq(r, "�")
-  check(not valid)
-
-  r, valid = utf8.clean("A\xFFB", "?")
-  eq(r, "A?B")
-  check(not valid)
-
-  r, valid = utf8.clean("\xFF\xFEB", "")
-  eq(r, "B")
-  check(not valid)
-
-  -- invalid byte followed by a valid multibyte sequence
-  r, valid = utf8.clean("\xFFé\x80")
-  eq(r, "�é�")
-  check(not valid)
+  assert_array({ utf8.clean("A\xFFB", "?") }, { "A?B", false })
+  assert_array({ utf8.clean("\xFFB", "?") }, { "?B", false })
+  assert_array({ utf8.clean("B\xFF", "?") }, { "B?", false })
+  assert_array({ utf8.clean("\xFFé\x80", "?") }, { "?é?", false })
 
   -- consecutive invalid bytes are replaced with only one replacement character
-  r, valid = utf8.clean("\xFF\x80\xFF")
-  eq(r, "�")
-  check(not valid)
+  assert_array({ utf8.clean("\xFF\x80\xFF") }, { "�", false })
+  assert_array({ utf8.clean("\xFF\x80\xFF", "?") }, { "?", false })
 
   -- a replacement containing UTF-8 itself
-  r, valid = utf8.clean("A\xFFB", "🙂")
-  eq(r, "A🙂B")
-  check(not valid)
+  assert_array({ utf8.clean("A\xFFB", "🙂") }, { "A🙂B", false })
 
-  -- adjacent invalid bytes collapse into a single replacement
-  r, valid = utf8.clean("\xFF\xFE")
-  eq(r, "\u{FFFD}")
-  check(not valid)
+  -- replaces surrogates and code points above 0x10FFFF
+  assert_array({ utf8.clean("A\xED\xA0\x80B", "?") }, { "A?B", false })
+  assert_array({ utf8.clean("A\xF8\x88\x80\x80\x80B", "?") }, { "A?B", false })
 
-  r, valid = utf8.clean("\xFF\xFE", "?")
-  eq(r, "?")
-  check(not valid)
-
-  r, valid = utf8.clean("A\xFF\xFEB", "?")
-  eq(r, "A?B")
-  check(not valid)
+  -- leading continuation bytes
+  assert_array({ utf8.clean("A\x80\x80\x80B", "?") }, { "A?B", false })
 end
 
 ---
