@@ -134,6 +134,7 @@ fn lua_char_range_to_byte_range(s: &[u8], i: LuaInteger, j: LuaInteger) -> Range
 
 /// Helper for constructing a `mlua::Error::BadArgument`
 fn bad_argument(to: impl Into<String>, pos: usize, cause: mlua::Error) -> mlua::Error {
+    #[allow(clippy::arc_with_non_send_sync)]
     mlua::Error::BadArgument {
         to: Some(to.into()),
         pos: pos + 1,
@@ -161,6 +162,56 @@ fn normalize_lua_index(pos: LuaInteger, len: usize) -> usize {
         0
     } else {
         (len as LuaInteger + pos + 1) as usize
+    }
+}
+
+/// Validates a 1-based byte range `i..=j`.
+fn check_byte_range(
+    name: &'static str,
+    first_arg: usize,
+    i: usize,
+    j: usize,
+    len: usize,
+) -> LuaResult<()> {
+    if !(1 <= i && i - 1 <= len) {
+        return Err(bad_argument(
+            name,
+            first_arg,
+            mlua::Error::runtime("initial position out of bounds"),
+        ));
+    }
+    if !(j <= len) {
+        return Err(bad_argument(
+            name,
+            first_arg + 1,
+            mlua::Error::runtime("final position out of bounds"),
+        ));
+    }
+    Ok(())
+}
+
+/// Decodes the code point that starts at `position`.
+///
+/// Returns the 1-based byte position and the code point, or `None` when `position` is invalid.
+/// Invalid encodings decode to code point `0`.
+fn char_at(bytes: &[u8], position: usize) -> Option<(LuaInteger, LuaInteger)> {
+    if position >= bytes.len() {
+        return None;
+    }
+
+    let code_point = decode(&bytes[position..], false).map_or(0, |(cp, _)| cp);
+    Some(((position + 1) as LuaInteger, code_point as LuaInteger))
+}
+
+/// Resolves the byte offset at which `find`/`match` begin searching.
+///
+/// Returns `None` when `init` points past the last character.
+fn search_init(s: &str, init: Option<LuaInteger>) -> Option<usize> {
+    let init = init.map_or(1, |init| if init == 0 { 1 } else { init });
+    match lua_char_index_to_byte_offset(s.as_bytes(), init) {
+        Some(start) => Some(start),
+        None if init <= 0 => Some(0),
+        None => None,
     }
 }
 
@@ -288,29 +339,7 @@ fn l_char(lua: &Lua, args: Variadic<LuaInteger>) -> LuaResult<LuaString> {
             ));
         }
 
-        let cp = *cp as u32;
-
-        match cp {
-            0x0000..0x0080 => {
-                bytes.push(cp as u8);
-            }
-            0x0080..0x0800 => {
-                bytes.push(0xC0 | (cp >> 6) as u8);
-                bytes.push(0x80 | (cp & 0x3F) as u8);
-            }
-            0x0800..0x010000 => {
-                bytes.push(0xE0 | (cp >> 12) as u8);
-                bytes.push(0x80 | (cp >> 6 & 0x3F) as u8);
-                bytes.push(0x80 | (cp & 0x3F) as u8);
-            }
-            0x010000..0x110000 => {
-                bytes.push(0xF0 | (cp >> 18) as u8);
-                bytes.push(0x80 | (cp >> 12 & 0x3F) as u8);
-                bytes.push(0x80 | (cp >> 6 & 0x3F) as u8);
-                bytes.push(0x80 | (cp & 0x3F) as u8);
-            }
-            _ => unreachable!(),
-        }
+        encode(*cp as u32, &mut bytes);
     }
 
     lua.create_string(bytes)
@@ -320,11 +349,8 @@ fn l_find(
     lua: &Lua,
     (s, pattern, init, plain): (String, String, Option<LuaInteger>, Option<bool>),
 ) -> LuaResult<MultiValue> {
-    let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
-    let start_byte = match lua_char_index_to_byte_offset(s.as_bytes(), init) {
-        Some(start) => start,
-        None if init <= 0 => 0,
-        None => return (mlua::Value::Nil,).into_lua_multi(lua),
+    let Some(start_byte) = search_init(&s, init) else {
+        return (mlua::Value::Nil,).into_lua_multi(lua);
     };
 
     if plain.unwrap_or(false) {
@@ -370,7 +396,6 @@ fn l_gmatch(lua: &Lua, (s, pattern): (LuaString, LuaString)) -> LuaResult<Functi
         .map_err(|_| mlua::Error::runtime("malformed pattern"))?;
 
     let mut matches = gmatch(s, p);
-
     lua.create_function_mut(move |lua, ()| match matches.next() {
         Some(m) => Ok(MultiValue::from_iter(
             m.values().map(|c| capture_value_to_lua(lua, c)),
@@ -385,6 +410,23 @@ enum LuaReplacement {
     Function(mlua::Function),
 }
 
+/// Interprets a value returned by a table/function replacement.
+///
+/// Strings and numbers become replacement text, `nil`/`false` leave the match untouched, and any
+/// other value is rejected, matching `string.gsub`.
+fn replacement_value(value: Value) -> LuaResult<Option<String>> {
+    match value {
+        Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
+        Value::Integer(integer) => Ok(Some(integer.to_string())),
+        Value::Number(number) => Ok(Some(number.to_string())),
+        Value::Nil | Value::Boolean(false) => Ok(None),
+        other => Err(mlua::Error::runtime(format!(
+            "invalid replacement value (a {})",
+            other.type_name()
+        ))),
+    }
+}
+
 impl LuaReplacement {
     fn apply(&self, lua: &Lua, m: &Match) -> LuaResult<Option<String>> {
         match self {
@@ -396,32 +438,12 @@ impl LuaReplacement {
                     |c| capture_value_to_lua(lua, c),
                 );
 
-                let value = table.get(key)?;
-                match value {
-                    Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
-                    Value::Integer(integer) => Ok(Some(integer.to_string())),
-                    Value::Number(number) => Ok(Some(number.to_string())),
-                    Value::Nil | Value::Boolean(false) => Ok(None),
-                    other => Err(mlua::Error::runtime(format!(
-                        "invalid replacement value (a {})",
-                        other.type_name()
-                    ))),
-                }
+                replacement_value(table.get(key)?)
             }
             Self::Function(function) => {
                 let args = Variadic::from_iter(m.values().map(|c| capture_value_to_lua(lua, c)));
 
-                let value = function.call(args)?;
-                match value {
-                    Value::String(string) => Ok(Some(string.to_str()?.to_owned())),
-                    Value::Integer(integer) => Ok(Some(integer.to_string())),
-                    Value::Number(number) => Ok(Some(number.to_string())),
-                    Value::Nil | Value::Boolean(false) => Ok(None),
-                    other => Err(mlua::Error::runtime(format!(
-                        "invalid replacement value (a {})",
-                        other.type_name()
-                    ))),
-                }
+                replacement_value(function.call(args)?)
             }
         }
     }
@@ -478,21 +500,7 @@ fn l_len(
     let i = i.map_or(1, |i| normalize_lua_index(i, len));
     let j = j.map_or(len, |j| normalize_lua_index(j, len));
 
-    if !(1 <= i && i - 1 <= len) {
-        return Err(bad_argument(
-            "len",
-            2,
-            mlua::Error::runtime("initial position out of bounds"),
-        ));
-    }
-
-    if !(j <= len) {
-        return Err(bad_argument(
-            "len",
-            3,
-            mlua::Error::runtime("final position out of bounds"),
-        ));
-    }
+    check_byte_range("len", 2, i, j, len)?;
 
     let start = i - 1;
     let end = j;
@@ -517,11 +525,8 @@ fn l_match(
     lua: &Lua,
     (s, pattern, init): (String, String, Option<LuaInteger>),
 ) -> LuaResult<MultiValue> {
-    let init = init.map_or(1, |x| if x == 0 { 1 } else { x });
-    let start_byte = match lua_char_index_to_byte_offset(s.as_bytes(), init) {
-        Some(start) => start,
-        None if init <= 0 => 0,
-        None => return (mlua::Value::Nil,).into_lua_multi(lua),
+    let Some(start_byte) = search_init(&s, init) else {
+        return (mlua::Value::Nil,).into_lua_multi(lua);
     };
 
     let p = Pattern::parse(&pattern).map_err(|_| mlua::Error::runtime("malformed pattern"))?;
@@ -697,43 +702,23 @@ fn l_charpos(
     let len = bytes.len();
 
     let position = match (i_or_n, n) {
-        (None, None) | (Some(0), None) | (None, Some(0)) | (Some(0), Some(0)) => 0,
-        (None, Some(n)) => {
-            debug_assert!(n != 0);
-            let Some(pos) = move_by(&bytes, 0, n as isize) else {
-                return mlua::Nil.into_lua_multi(lua);
-            };
-            pos
-        }
+        (None, None) | (Some(0), None) | (None, Some(0)) | (Some(0), Some(0)) => Some(0),
+        (None, Some(n)) => move_by(&bytes, 0, n as isize),
         (Some(n), None) => {
-            debug_assert!(n != 0);
             let i = if n > 0 { 0 } else { len };
             let n = if n > 0 { n - 1 } else { n } as isize;
-            let Some(pos) = move_by(&bytes, i, n as isize) else {
-                return mlua::Nil.into_lua_multi(lua);
-            };
-            pos
+            move_by(&bytes, i, n)
         }
         (Some(i), Some(n)) => {
-            debug_assert!(i != 0 && n != 0);
             let i = normalize_lua_index(i, len).max(1) - 1;
-            let Some(pos) = move_by(&bytes, i, n as isize) else {
-                return mlua::Nil.into_lua_multi(lua);
-            };
-            pos
+            move_by(&bytes, i, n as isize)
         }
     };
 
-    if position == len {
-        return mlua::Nil.into_lua_multi(lua);
+    match position.and_then(|pos| char_at(&bytes, pos)) {
+        Some(entry) => entry.into_lua_multi(lua),
+        None => mlua::Nil.into_lua_multi(lua),
     }
-
-    let cp = match decode(&bytes[position..], false) {
-        Ok((cp, _)) => cp,
-        Err(_) => 0,
-    };
-
-    (position + 1, cp).into_lua_multi(lua)
 }
 
 fn l_next(
@@ -747,40 +732,16 @@ fn l_next(
 
     let position = match (offset, index) {
         (0, 0) => return (0, 0).into_lua_multi(lua),
-        (0, n) if n < 0 => return mlua::Nil.into_lua_multi(lua),
-        (0, n) => {
-            debug_assert!(n > 1);
-            let Some(pos) = move_by(&bytes, 0, (n - 1) as isize) else {
-                return mlua::Nil.into_lua_multi(lua);
-            };
-            pos
-        }
-        (o, 0) => {
-            debug_assert!(o > 0);
-            let Some(pos) = char_start(&bytes, o - 1) else {
-                return mlua::Nil.into_lua_multi(lua);
-            };
-            pos
-        }
-        (o, n) => {
-            debug_assert!(o > 0 && n != 0);
-            let Some(pos) = move_by(&bytes, o - 1, n as isize) else {
-                return mlua::Nil.into_lua_multi(lua);
-            };
-            pos
-        }
+        (0, n) if n < 0 => None,
+        (0, n) => move_by(&bytes, 0, (n - 1) as isize),
+        (o, 0) => char_start(&bytes, o - 1),
+        (o, n) => move_by(&bytes, o - 1, n as isize),
     };
 
-    if position == len {
-        return mlua::Nil.into_lua_multi(lua);
+    match position.and_then(|pos| char_at(&bytes, pos)) {
+        Some(entry) => entry.into_lua_multi(lua),
+        None => mlua::Nil.into_lua_multi(lua),
     }
-
-    let cp = match decode(&bytes[position..], false) {
-        Ok((cp, _)) => cp,
-        Err(_) => 0,
-    };
-
-    (position + 1, cp).into_lua_multi(lua)
 }
 
 fn l_insert(lua: &Lua, (s, args): (LuaString, MultiValue)) -> LuaResult<LuaString> {
@@ -898,21 +859,7 @@ fn l_width(lua: &Lua, args: MultiValue) -> LuaResult<LuaInteger> {
             let i = normalize_lua_index(i, len);
             let j = normalize_lua_index(j, len);
 
-            if !(1 <= i && i - 1 <= len) {
-                return Err(bad_argument(
-                    "width",
-                    2,
-                    mlua::Error::runtime("initial position out of bounds"),
-                ));
-            }
-
-            if !(j <= len) {
-                return Err(bad_argument(
-                    "width",
-                    3,
-                    mlua::Error::runtime("final position out of bounds"),
-                ));
-            }
+            check_byte_range("width", 2, i, j, len)?;
 
             let width = CodePoints::range(&bytes, i - 1..j, false)
                 .map(|(_, r)| r.map(|cp| ch_width(cp, ambi_width, default_width)))
@@ -951,21 +898,7 @@ fn l_widthindex(
     let ambi_width = ambi_width.unwrap_or(1) as usize;
     let default_width = default_width.unwrap_or(0) as usize;
 
-    if !(1 <= i && i - 1 <= len) {
-        return Err(bad_argument(
-            "widthindex",
-            3,
-            mlua::Error::runtime("initial position out of bounds"),
-        ));
-    }
-
-    if !(j <= len) {
-        return Err(bad_argument(
-            "widthindex",
-            4,
-            mlua::Error::runtime("final position out of bounds"),
-        ));
-    }
+    check_byte_range("widthindex", 3, i, j, len)?;
 
     if i > j {
         return 0.into_lua_multi(lua);
@@ -1004,21 +937,7 @@ fn l_widthlimit(
     let ambi_width = ambi_width.unwrap_or(1) as usize;
     let default_width = default_width.unwrap_or(0) as usize;
 
-    if !(1 <= i && i - 1 <= len) {
-        return Err(bad_argument(
-            "widthlimit",
-            3,
-            mlua::Error::runtime("initial position out of bounds"),
-        ));
-    }
-
-    if !(j <= len) {
-        return Err(bad_argument(
-            "widthlimit",
-            4,
-            mlua::Error::runtime("final position out of bounds"),
-        ));
-    }
+    check_byte_range("widthlimit", 3, i, j, len)?;
 
     if i > j {
         if limit >= 0 {
@@ -1278,7 +1197,7 @@ mod tests {
     use super::create_module;
 
     #[test]
-    fn api_is_compatibile() -> Result<(), mlua::Error> {
+    fn api_is_compatible() -> Result<(), mlua::Error> {
         let lua = mlua::Lua::new();
         let module = create_module(&lua).unwrap();
         lua.register_module("lua-utf8", module).unwrap();

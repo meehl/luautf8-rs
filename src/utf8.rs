@@ -164,7 +164,7 @@ impl<B: AsRef<[u8]>> CodePoints<B> {
             return None;
         }
         Some(
-            match decode_before(&self.bytes.as_ref(), self.front, self.back, self.strict) {
+            match decode_before(self.bytes.as_ref(), self.front, self.back, self.strict) {
                 Ok((start, cp)) => {
                     self.back = start;
                     (start, Ok(cp))
